@@ -1,0 +1,28 @@
+
+name: Улучшение / Рефакторинг
+description: Запрос на улучшение стабильности/качества
+title: "[improvement] Коротко сформулируйте задачу"
+labels: ["improvement"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Контекст
+      description: Что сейчас происходит и почему это важно исправить
+      placeholder: Опишите текущую проблему, ссылки на код/логи
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Требования
+      description: Что именно должно быть сделано
+      placeholder: Список конкретных пунктов
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Критерии готовности
+      placeholder: Что проверяем, какие тесты должны пройти
+  - type: textarea
+    id: touched
+    attributes:
+      label: Где править
+      placeholder: Файлы/модули, над которыми предстоит работа

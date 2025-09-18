@@ -1,0 +1,6 @@
+{
+  "name": "WorkTimeTracker",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "features": {},
+  "postCreateCommand": "pip install -r requirements.txt && pip install -r requirements-dev.txt || true"
+}
