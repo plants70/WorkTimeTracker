@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+import datetime as dt
 
 from notifications.rules_manager import load_rules, Rule
 from telegram_bot.notifier import TelegramNotifier
@@ -60,7 +60,7 @@ def _open_db() -> sqlite3.Connection:
 
 
 def _now_iso() -> str:
-    return datetime.now(datetime.UTC).replace(microsecond=0).isoformat()
+    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
 
 
 class _SafeDict(dict):
@@ -101,7 +101,7 @@ def _maybe_fire_status_window_rules(email: str) -> None:
             if window_min <= 0 or limit <= 0:
                 continue
             start_ts = (
-                (datetime.now(datetime.UTC) - timedelta(minutes=window_min))
+                (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=window_min))
                 .replace(microsecond=0)
                 .isoformat()
             )
@@ -133,7 +133,7 @@ def _maybe_fire_status_window_rules(email: str) -> None:
 
 # === Событие: длительный статус (подаётся подготовленными данными) ===
 def long_status_check(
-    email: str, status_name: str, started_dt: datetime, elapsed_min: int
+    email: str, status_name: str, started_dt: dt.datetime, elapsed_min: int
 ) -> None:
     email = (email or "").strip().lower()
     rules = [r for r in load_rules() if r.kind == "long_status"]
@@ -149,7 +149,7 @@ def long_status_check(
             need = rule.min_duration_min or 0
             if need <= 0 or elapsed_min < need:
                 continue
-            context = f"long:{s_lc}:{started_dt.replace(microsecond=0).astimezone(datetime.UTC).isoformat()}"
+            context = f"long:{s_lc}:{started_dt.replace(microsecond=0).astimezone(dt.UTC).isoformat()}"
             if not _ratelimit_ok(con, rule, email, context):
                 continue
 
@@ -251,18 +251,18 @@ def poll_long_running_remote() -> None:
 
     # 3) Парсим время: если «наивное» — трактуем как локальное и конвертируем в UTC
     try:
-        parsed = datetime.fromisoformat(started_iso.replace("Z", "+00:00"))
+        parsed = dt.datetime.fromisoformat(started_iso.replace("Z", "+00:00"))
     except Exception:
         logger.debug("poll_long_running_remote: bad started_iso=%r", started_iso)
         return
     if parsed.tzinfo is None:
-        local_tz = datetime.now().astimezone().tzinfo or datetime.UTC
+        local_tz = dt.datetime.now().astimezone().tzinfo or dt.UTC
         started_dt = parsed.replace(tzinfo=local_tz)
     else:
         started_dt = parsed
-    started_utc = started_dt.astimezone(datetime.UTC)
+    started_utc = started_dt.astimezone(dt.UTC)
     elapsed_min = max(
-        0, int((datetime.now(datetime.UTC) - started_utc).total_seconds() // 60)
+        0, int((dt.datetime.now(dt.UTC) - started_utc).total_seconds() // 60)
     )
 
     logger.debug(
@@ -295,10 +295,10 @@ def _ratelimit_ok(
     if not row:
         return True
     try:
-        prev = datetime.fromisoformat(row[0])
+        prev = dt.datetime.fromisoformat(row[0])
     except Exception:
         return True
-    gap = (datetime.now(datetime.UTC) - prev).total_seconds()
+    gap = (dt.datetime.now(dt.UTC) - prev).total_seconds()
     return gap >= max(1, rule.rate_limit_sec)
 
 

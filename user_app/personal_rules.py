@@ -2,7 +2,7 @@
 from __future__ import annotations
 import sqlite3
 import logging
-from datetime import datetime
+import datetime as dt
 
 from config import (
     PERSONAL_RULES_ENABLED,
@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_status_events_email_ts ON status_events(email, ts
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(datetime.UTC).replace(microsecond=0).isoformat()
+    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
 
 
 def _open_db() -> sqlite3.Connection:
@@ -70,17 +70,17 @@ def check_long_status(
 
     try:
         # Преобразуем строку в datetime с учетом таймзоны
-        started_dt = datetime.fromisoformat(started_iso)
+        started_dt = dt.datetime.fromisoformat(started_iso)
 
         # Если тайзона отсутствует — считаем это ЛОКАЛЬНЫМ временем машины
-        local_tz = datetime.now().astimezone().tzinfo
+        local_tz = dt.datetime.now().astimezone().tzinfo
         if started_dt.tzinfo is None:
             started_local = started_dt.replace(tzinfo=local_tz)
         else:
             started_local = started_dt.astimezone(local_tz)
 
         # Нормализуем в UTC для расчётов
-        started_utc = started_local.astimezone(datetime.UTC)
+        started_utc = started_local.astimezone(dt.UTC)
 
         # Добавляем отладочную информацию
         log.debug(

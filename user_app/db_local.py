@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
+import datetime as dt
 from typing import Any
 import logging
 from contextlib import contextmanager
@@ -308,7 +308,7 @@ class LocalDB:
                 required = {"session_id", "email", "name", "action_type", "timestamp"}
                 if not required.issubset(set(cols)):
                     legacy_name = (
-                        f"app_logs_legacy_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                        f"app_logs_legacy_{dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
                     )
                     cur.execute(f"ALTER TABLE logs RENAME TO {legacy_name};")
                     logger.warning(
@@ -452,7 +452,7 @@ class LocalDB:
         self._ensure_open()
         if self.conn is None:
             return -1
-        ts = datetime.now(datetime.UTC).isoformat()
+        ts = dt.datetime.now(dt.UTC).isoformat()
         with self._lock:
             with write_tx() as conn:
                 cur = conn.cursor()
@@ -467,7 +467,7 @@ class LocalDB:
         self._ensure_open()
         if self.conn is None:
             return 0
-        cutoff = (datetime.now(datetime.UTC) - timedelta(days=days)).isoformat()
+        cutoff = (dt.datetime.now(dt.UTC) - dt.timedelta(days=days)).isoformat()
         with self._lock:
             with write_tx() as conn:
                 cur = conn.cursor()
@@ -480,7 +480,7 @@ class LocalDB:
         self._ensure_open()
         if self.conn is None:
             return 0
-        cutoff = (datetime.now(datetime.UTC) - timedelta(days=days)).isoformat()
+        cutoff = (dt.datetime.now(dt.UTC) - dt.timedelta(days=days)).isoformat()
         with self._lock:
             with write_tx() as conn:
                 cur = conn.cursor()
@@ -579,7 +579,7 @@ class LocalDB:
     # Action logs (то, что синхронизируется)
     # ------------------------------------------------------------------ #
     def _gen_session_id(self, email: str) -> str:
-        return f"{(email or '')[:8]}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        return f"{(email or '')[:8]}_{dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     def log_action(
         self,
@@ -605,7 +605,7 @@ class LocalDB:
         if comment and len(comment) > MAX_COMMENT_LENGTH:
             comment = comment[:MAX_COMMENT_LENGTH]
 
-        ts = datetime.now(datetime.UTC).isoformat()
+        ts = dt.datetime.now(dt.UTC).isoformat()
         session_id = session_id or self._gen_session_id(email)
         prio = max(1, min(3, int(priority or 1)))
 
@@ -677,7 +677,7 @@ class LocalDB:
         if comment and len(comment) > MAX_COMMENT_LENGTH:
             comment = comment[:MAX_COMMENT_LENGTH]
 
-        ts = datetime.now(datetime.UTC).isoformat()
+        ts = dt.datetime.now(dt.UTC).isoformat()
         session_id = session_id or self._gen_session_id(email)
         prio = max(1, min(3, int(priority or 1)))
 
@@ -762,7 +762,7 @@ class LocalDB:
                            last_sync_attempt = ?
                      WHERE id IN ({placeholders})
                     """,
-                    [datetime.now(datetime.UTC).isoformat(), *ids],
+                    [dt.datetime.now(dt.UTC).isoformat(), *ids],
                 )
 
     def check_existing_logout(self, email: str, session_id: str | None = None) -> bool:
@@ -818,9 +818,9 @@ class LocalDB:
             rid = int(row[0])
             # Нормализуем время окончания
             if end_time is None:
-                ts_end = datetime.now(datetime.UTC).isoformat()
-            elif isinstance(end_time, datetime):
-                ts_end = end_time.astimezone(datetime.UTC).isoformat()
+                ts_end = dt.datetime.now(dt.UTC).isoformat()
+            elif isinstance(end_time, dt.datetime):
+                ts_end = end_time.astimezone(dt.UTC).isoformat()
             else:
                 ts_end = str(end_time)
 

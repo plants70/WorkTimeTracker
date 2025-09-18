@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import datetime as dt
 
 from sheets_api import SheetsAPIError, get_sheets_api
 from config import (
@@ -174,9 +174,7 @@ class AdminRepo:
                     email,
                 )
                 return False
-            now_iso = (
-                datetime.now(datetime.UTC).astimezone().isoformat(timespec="seconds")
-            )
+            now_iso = dt.datetime.now(dt.UTC).astimezone().isoformat(timespec="seconds")
             # корректное завершение активной строки
             ok = False
             if hasattr(self.sheets, "finish_active_session"):

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import logging
 import time
-from datetime import datetime
+import datetime as dt
 import requests
 import os
 
@@ -34,7 +34,7 @@ NOTIFICATIONS_LOG_SHEET = "NotificationsLog"
 
 
 def _now_iso() -> str:
-    return datetime.now(datetime.UTC).astimezone().isoformat(timespec="seconds")
+    return dt.datetime.now(dt.UTC).astimezone().isoformat(timespec="seconds")
 
 
 def _bool(v, default=False):

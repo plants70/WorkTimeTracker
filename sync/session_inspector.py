@@ -1,6 +1,6 @@
 # sync/session_inspector.py
 import logging
-from datetime import datetime
+import datetime as dt
 
 from sheets_api import get_sheets_api
 
@@ -24,11 +24,11 @@ class SessionInspector:
         if not login_time:
             return False
         try:
-            dt = datetime.fromisoformat(login_time.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.UTC)
+            dt_local = dt.datetime.fromisoformat(login_time.replace("Z", "+00:00"))
+            if dt_local.tzinfo is None:
+                dt_local = dt_local.replace(tzinfo=dt.UTC)
             age_h = (
-                datetime.now(datetime.UTC) - dt.astimezone(datetime.UTC)
+                dt.datetime.now(dt.UTC) - dt_local.astimezone(dt.UTC)
             ).total_seconds() / 3600.0
             return age_h > self.max_age_hours
         except Exception:

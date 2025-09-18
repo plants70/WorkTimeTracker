@@ -6,7 +6,7 @@ import sys
 import os
 import random
 import logging
-from datetime import datetime
+import datetime as dt
 from typing import Any
 from pathlib import Path
 from google.auth.transport.requests import AuthorizedSession
@@ -444,30 +444,30 @@ class SheetsAPI:
             try:
                 return ZoneInfo(tz_name)
             except Exception:
-                local_tz = datetime.now().astimezone().tzinfo
+                local_tz = dt.datetime.now().astimezone().tzinfo
                 if local_tz:
                     logger.warning(
                         f"ZoneInfo('{tz_name}') unavailable; using system local TZ"
                     )
                     return local_tz
                 logger.warning(f"ZoneInfo('{tz_name}') unavailable; fallback to UTC")
-                return datetime.UTC
+                return dt.UTC
         except Exception:
-            return datetime.UTC
+            return dt.UTC
 
-    def _fmt_local(self, dt: datetime | None = None) -> str:
+    def _fmt_local(self, moment: dt.datetime | None = None) -> str:
         """
         Возвращает строку 'YYYY-MM-DD HH:MM:SS' в локальном TZ (для корректного парсинга в Google Sheets).
         """
         tz = self._get_tz()
-        if dt is None:
-            dt = datetime.now(tz)
+        if moment is None:
+            moment = dt.datetime.now(tz)
         else:
-            if dt.tzinfo is None:
+            if moment.tzinfo is None:
                 # считаем вход как UTC-метку без tzinfo
-                dt = dt.replace(tzinfo=datetime.UTC)
-            dt = dt.astimezone(tz)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+                moment = moment.replace(tzinfo=dt.UTC)
+            moment = moment.astimezone(tz)
+        return moment.strftime("%Y-%m-%d %H:%M:%S")
 
     def _ensure_local_str(self, ts: str | None) -> str:
         """
@@ -477,8 +477,8 @@ class SheetsAPI:
         if not ts:
             return self._fmt_local()
         try:
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            return self._fmt_local(dt)
+            moment = dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return self._fmt_local(moment)
         except Exception:
             return ts
 

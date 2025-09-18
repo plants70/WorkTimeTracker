@@ -1,7 +1,7 @@
 # user_app/api.py
 from __future__ import annotations
 from sheets_api import SheetsAPI
-from datetime import datetime
+import datetime as dt
 import uuid
 
 
@@ -36,7 +36,7 @@ class UserAPI:
             email=email,
             name=name,
             session_id=session_id,
-            login_time=datetime.now(datetime.UTC).isoformat(),
+            login_time=dt.datetime.now(dt.UTC).isoformat(),
         )
         return session_id
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from datetime import datetime, timedelta
+import datetime as dt
 import logging
 import argparse
 
@@ -32,7 +32,7 @@ TS_HEADER_CANDIDATES = (
 )
 
 
-def _parse_ts(s: str) -> datetime | None:
+def _parse_ts(s: str) -> dt.datetime | None:
     """
     Parse timestamp in flexible formats. Prefer ISO-8601 with timezone.
     Returns timezone-aware datetime in local timezone for date comparison.
@@ -51,24 +51,24 @@ def _parse_ts(s: str) -> datetime | None:
     ]
     for f in fmts:
         try:
-            dt = datetime.strptime(s, f)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.UTC)
-            return dt.astimezone()
+            parsed = dt.datetime.strptime(s, f)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.UTC)
+            return parsed.astimezone()
         except Exception:
             continue
     try:
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.UTC)
-        return dt.astimezone()
+        parsed = dt.datetime.fromisoformat(s)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.UTC)
+        return parsed.astimezone()
     except Exception:
         return None
 
 
-def _yesterday_local(base: datetime | None = None) -> datetime.date:
-    now_local = base or datetime.now().astimezone()
-    return now_local.date() - timedelta(days=1)
+def _yesterday_local(base: dt.datetime | None = None) -> dt.date:
+    now_local = base or dt.datetime.now().astimezone()
+    return now_local.date() - dt.timedelta(days=1)
 
 
 def _find_timestamp_index(header: list[str]) -> int | None:
@@ -109,7 +109,7 @@ def _ensure_archive_sheet(sheets: SheetsAPI, header: list[str]) -> object:
 
 
 def _collect_rows_for_date(
-    values: list[list[str]], day: datetime.date
+    values: list[list[str]], day: dt.date
 ) -> tuple[list[list[str]], list[list[str]], list[str]]:
     """
     Split table rows to (to_archive, to_keep).
@@ -140,7 +140,7 @@ def _collect_rows_for_date(
 
 
 def _process_sheet(
-    sheets: SheetsAPI, sheet_name: str, day: datetime.date, dry_run: bool = False
+    sheets: SheetsAPI, sheet_name: str, day: dt.date, dry_run: bool = False
 ) -> tuple[int, int]:
     """
     Process one sheet: move rows for `day` to ARCHIVE_SHEET.
@@ -193,7 +193,7 @@ def run_archive(
 
     if target_date:
         try:
-            day = datetime.strptime(target_date, "%Y-%m-%d").date()
+            day = dt.datetime.strptime(target_date, "%Y-%m-%d").date()
         except Exception as e:
             raise SystemExit("Invalid --date format. Use YYYY-MM-DD") from e
     else:
