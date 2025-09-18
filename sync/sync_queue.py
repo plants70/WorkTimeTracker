@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 from threading import Lock
 from typing import List, Dict, Optional
 import uuid
+
 from config import MAX_COMMENT_LENGTH
+from .threading_utils import guard_gui_long_operation
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +29,23 @@ class SyncQueue:
     def _load_queue(self):
         """Загружает очередь из файла (если есть)"""
         try:
-            if self.queue_file.exists():
-                with open(self.queue_file, "r", encoding='utf-8') as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        self.queue = data
-                        logger.info(f"Очередь загружена из {self.queue_file} с {len(self.queue)} записями")
-                    else:
-                        self.queue = []
-                        logger.warning("Неверный формат файла очереди, инициализация пустой очереди")
-            else:
-                self.queue = []
-                logger.info("Файл очереди не найден, инициализация пустой очереди")
+            with guard_gui_long_operation("sync_queue.load", threshold=0.2):
+                if self.queue_file.exists():
+                    with open(self.queue_file, "r", encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            self.queue = data
+                            logger.info(
+                                f"Очередь загружена из {self.queue_file} с {len(self.queue)} записями"
+                            )
+                        else:
+                            self.queue = []
+                            logger.warning(
+                                "Неверный формат файла очереди, инициализация пустой очереди"
+                            )
+                else:
+                    self.queue = []
+                    logger.info("Файл очереди не найден, инициализация пустой очереди")
         except Exception as e:
             logger.error(f"Ошибка загрузки очереди: {e}")
             self.queue = []
@@ -47,9 +54,10 @@ class SyncQueue:
     def _save_queue(self):
         """Сохраняет очередь в файл"""
         try:
-            with self.lock:
-                with open(self.queue_file, "w", encoding='utf-8') as f:
-                    json.dump(self.queue, f, ensure_ascii=False, indent=2, default=str)
+            with guard_gui_long_operation("sync_queue.save", threshold=0.2):
+                with self.lock:
+                    with open(self.queue_file, "w", encoding='utf-8') as f:
+                        json.dump(self.queue, f, ensure_ascii=False, indent=2, default=str)
             logger.debug("Очередь сохранена в файл")
         except Exception as e:
             logger.error(f"Ошибка сохранения очереди: {e}")

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 from config import LOCAL_DB_PATH, MAX_COMMENT_LENGTH, MAX_HISTORY_DAYS
 from user_app.db_migrations import apply_migrations
+from sync.threading_utils import guard_gui_long_operation
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,8 @@ _LOCK = threading.RLock()
 _CONN = None
 _DB_PATH = None
 _BUSY_MS = 60000  # до 60с ждём блокировку
+_WRITE_MAX_RETRIES = 5
+_WRITE_RETRY_MAX_DELAY = 1.0
 
 
 class LocalDBError(Exception):
@@ -129,10 +132,11 @@ def read_cursor():
     with _LOCK:
         _ensure_conn_alive()
         cur = _CONN.cursor()
-        try:
-            yield cur
-        finally:
-            cur.close()
+        with guard_gui_long_operation("db.read_cursor", threshold=0.4):
+            try:
+                yield cur
+            finally:
+                cur.close()
 
 
 @contextmanager
@@ -142,26 +146,45 @@ def write_tx():
     """
     if not _CONN:
         raise RuntimeError("DB не инициализирована")
-    with _LOCK:
-        _ensure_conn_alive()
-        try:
-            _CONN.execute("BEGIN IMMEDIATE;")
-            yield _CONN
-            _CONN.commit()
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e).lower():
-                logger.warning("database is locked -> retrying in 200ms")
-                time.sleep(0.2)
-                _CONN.rollback()
-                _CONN.execute("BEGIN IMMEDIATE")
-                yield _CONN
-                _CONN.commit()
+    last_err: Optional[Exception] = None
+    for attempt in range(1, _WRITE_MAX_RETRIES + 1):
+        with _LOCK:
+            _ensure_conn_alive()
+            try:
+                _CONN.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError as exc:
+                if "database is locked" in str(exc).lower():
+                    last_err = exc
+                else:
+                    raise
             else:
-                _CONN.rollback()
-                raise
-        except Exception:
-            _CONN.rollback()
-            raise
+                last_err = None
+                try:
+                    with guard_gui_long_operation("db.write_tx"):
+                        yield _CONN
+                    _CONN.commit()
+                    return
+                except Exception:
+                    _CONN.rollback()
+                    raise
+
+        if last_err is not None:
+            if attempt >= _WRITE_MAX_RETRIES:
+                break
+            delay = min(0.2 * attempt, _WRITE_RETRY_MAX_DELAY)
+            logger.warning(
+                "database is locked (attempt %d/%d), retrying in %.1fs",
+                attempt,
+                _WRITE_MAX_RETRIES,
+                delay,
+            )
+            time.sleep(delay)
+
+    if last_err is not None:
+        raise LocalDBError(
+            f"Не удалось начать транзакцию после {_WRITE_MAX_RETRIES} попыток"
+        ) from last_err
+    raise LocalDBError("Не удалось начать транзакцию")
 
 
 def close_connection(_conn=None):
@@ -217,6 +240,7 @@ class LocalDB:
             self.db_path = None
             self.conn = sqlite3.connect(":memory:", timeout=10, check_same_thread=False)
             self.conn.execute("PRAGMA journal_mode=MEMORY;")
+            self.conn.execute(f"PRAGMA busy_timeout={_BUSY_MS};")
             self.conn.execute("PRAGMA synchronous=OFF;")
             self.conn.execute("PRAGMA foreign_keys=ON;")
             self._ensure_schema()
@@ -238,7 +262,7 @@ class LocalDB:
                 )
                 try:
                     self.conn.execute("PRAGMA journal_mode=WAL;")      # лучше для конкуренции
-                    self.conn.execute("PRAGMA busy_timeout=5000;")     # 5с на блокировки внутри sqlite
+                    self.conn.execute(f"PRAGMA busy_timeout={_BUSY_MS};")     # подольше ждём блокировки
                     self.conn.execute("PRAGMA synchronous=NORMAL;")    # быстрее, достаточно надёжно
                     self.conn.execute("PRAGMA foreign_keys=ON;")
                 except Exception as e:
@@ -347,12 +371,46 @@ class LocalDB:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_session ON logs(session_id);")
 
             # Новые индексы под частые запросы
-            if 'synced' in cols and 'priority' in cols and 'id' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_synced_priority_id ON logs(synced, priority, id)")
-            if 'email' in cols and 'session_id' in cols and 'status_end_time' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_email_session_end ON logs(email, session_id, status_end_time)")
+            if {'synced', 'priority', 'timestamp', 'id'}.issubset(cols):
+                cur.execute("DROP INDEX IF EXISTS idx_logs_synced_priority_id;")
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_logs_synced_priority_ts
+                    ON logs(synced, priority DESC, timestamp ASC, id ASC)
+                    """
+                )
+            if {'email', 'session_id', 'status_end_time', 'action_type'}.issubset(cols):
+                cur.execute("DROP INDEX IF EXISTS idx_logs_email_session_end;")
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_logs_open_session
+                    ON logs(email, session_id)
+                    WHERE status_end_time IS NULL
+                      AND action_type IN ('STATUS_CHANGE','LOGIN')
+                    """
+                )
             if 'action_type' in cols:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_action_type ON logs(action_type)")
+            if {'email', 'action_type', 'timestamp'}.issubset(cols):
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_logs_email_action_ts
+                    ON logs(email, action_type, timestamp DESC)
+                    """
+                )
+            if {'email', 'session_id', 'action_type'}.issubset(cols):
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_logs_email_session_action
+                    ON logs(email, session_id, action_type)
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_logs_logout_email_session
+                    ON logs(email, session_id, LOWER(action_type))
+                    """
+                )
 
             # Триггеры
             cur.execute(
@@ -869,22 +927,48 @@ def get_db() -> LocalDB:
 def write_tx_external(db_path: Optional[str] = None):
     """Вспомогательная транзакция для внешнего кода (GUI/сервисы)."""
     path = db_path or str(LOCAL_DB_PATH)
-    conn = sqlite3.connect(
-        path, timeout=30, check_same_thread=False
-    )
+    conn = _connect(path)
+    last_err: Optional[Exception] = None
     try:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA busy_timeout=5000;")
-    except Exception:
-        pass
-    try:
-        yield conn
-        conn.commit()
+        for attempt in range(1, _WRITE_MAX_RETRIES + 1):
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
+            except sqlite3.OperationalError as exc:
+                if "database is locked" in str(exc).lower():
+                    last_err = exc
+                    if attempt >= _WRITE_MAX_RETRIES:
+                        break
+                    delay = min(0.2 * attempt, _WRITE_RETRY_MAX_DELAY)
+                    logger.warning(
+                        "external write_tx: database is locked (attempt %d/%d), retrying in %.1fs",
+                        attempt,
+                        _WRITE_MAX_RETRIES,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+            else:
+                last_err = None
+                try:
+                    with guard_gui_long_operation("db.write_tx_external"):
+                        yield conn
+                    conn.commit()
+                    return
+                except Exception:
+                    conn.rollback()
+                    raise
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+    if last_err is not None:
+        raise LocalDBError(
+            f"Не удалось начать транзакцию (external) после {_WRITE_MAX_RETRIES} попыток"
+        ) from last_err
+    raise LocalDBError("Не удалось начать транзакцию (external)")
 
 
 if __name__ == "__main__":
