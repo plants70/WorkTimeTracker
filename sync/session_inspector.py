@@ -1,31 +1,35 @@
 # sync/session_inspector.py
 import logging
-from datetime import datetime, timezone
-from typing import Optional, Dict, List
+from datetime import datetime
 
 from sheets_api import get_sheets_api
+
 sheets_api = get_sheets_api()
 from sync.network import is_internet_available
 
 logger = logging.getLogger(__name__)
+
 
 class SessionInspector:
     """
     Лёгкий «санитар»: не меняет поведение клиента, а только подлечивает зависшие active-сессии.
     Вызывается из вашего SyncManager в каждом тике при наличии интернета.
     """
+
     def __init__(self, db, max_age_hours: int = 12):
         self.db = db
         self.max_age_hours = max_age_hours
 
-    def _too_old(self, login_time: Optional[str]) -> bool:
+    def _too_old(self, login_time: str | None) -> bool:
         if not login_time:
             return False
         try:
             dt = datetime.fromisoformat(login_time.replace("Z", "+00:00"))
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            age_h = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+                dt = dt.replace(tzinfo=datetime.UTC)
+            age_h = (
+                datetime.now(datetime.UTC) - dt.astimezone(datetime.UTC)
+            ).total_seconds() / 3600.0
             return age_h > self.max_age_hours
         except Exception:
             return False
@@ -43,7 +47,7 @@ class SessionInspector:
             logger.debug("[Inspector] offline -> skip")
             return
         try:
-            sessions: List[Dict[str, str]] = sheets_api.get_all_active_sessions() or []
+            sessions: list[dict[str, str]] = sheets_api.get_all_active_sessions() or []
         except Exception as e:
             logger.error(f"[Inspector] cannot read ActiveSessions: {e}")
             return
@@ -55,7 +59,7 @@ class SessionInspector:
                     continue
 
                 email = (r.get("Email") or "").strip()
-                sid   = (r.get("SessionID") or "").strip()
+                sid = (r.get("SessionID") or "").strip()
                 ltime = (r.get("LoginTime") or "").strip()
 
                 # 1) Уже завершена локально -> доводим таблицу
@@ -67,9 +71,13 @@ class SessionInspector:
                         logger.debug(f"[Inspector] finish failed, will fallback: {e}")
                     if not ok:
                         try:
-                            sheets_api.kick_active_session(email, sid, status="finished")
+                            sheets_api.kick_active_session(
+                                email, sid, status="finished"
+                            )
                         except Exception as e:
-                            logger.error(f"[Inspector] fallback failed for {email}/{sid}: {e}")
+                            logger.error(
+                                f"[Inspector] fallback failed for {email}/{sid}: {e}"
+                            )
                             continue
                     logger.info(f"[Inspector] healed {email}/{sid} -> finished")
                     continue
@@ -83,9 +91,13 @@ class SessionInspector:
                         logger.debug(f"[Inspector] finish(old) failed, fallback: {e}")
                     if not ok:
                         try:
-                            sheets_api.kick_active_session(email, sid, status="finished")
+                            sheets_api.kick_active_session(
+                                email, sid, status="finished"
+                            )
                         except Exception as e:
-                            logger.error(f"[Inspector] fallback(old) failed for {email}/{sid}: {e}")
+                            logger.error(
+                                f"[Inspector] fallback(old) failed for {email}/{sid}: {e}"
+                            )
                             continue
                     logger.info(f"[Inspector] expired {email}/{sid} -> finished")
             except Exception as e:

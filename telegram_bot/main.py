@@ -1,9 +1,16 @@
 # telegram_bot/main.py
 from __future__ import annotations
-import logging, re, time, requests, os
+import logging
+import re
+import time
+import requests
+import os
 from typing import Optional
-from pathlib import Path
-from config import GOOGLE_SHEET_NAME, USERS_SHEET, TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN
+from config import (
+    GOOGLE_SHEET_NAME,
+    USERS_SHEET,
+    TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN,
+)
 from sheets_api import SheetsAPI
 
 # --- Единое логирование для телеграм бота ---
@@ -17,6 +24,7 @@ log.info("Telegram bot logging initialized (path=%s)", log_path)
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
+
 def _base() -> str:
     # config → ENV
     token = (CFG_TELEGRAM_BOT_TOKEN or os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
@@ -29,8 +37,14 @@ def _base() -> str:
         )
     return f"https://api.telegram.org/bot{token}"
 
+
 def _send(chat_id: int | str, text: str) -> None:
-    requests.post(_base()+"/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=20)
+    requests.post(
+        _base() + "/sendMessage",
+        json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+        timeout=20,
+    )
+
 
 def _num_to_col(n: int) -> str:
     res = ""
@@ -38,6 +52,7 @@ def _num_to_col(n: int) -> str:
         n, r = divmod(n - 1, 26)
         res = chr(65 + r) + res
     return res
+
 
 def _set_user_telegram(email: str, chat_id: int | str) -> bool:
     api = SheetsAPI()
@@ -53,14 +68,15 @@ def _set_user_telegram(email: str, chat_id: int | str) -> bool:
     for i, r in enumerate(values[1:], start=2):
         e = (r[ix_email] if ix_email < len(r) else "").strip().lower()
         if e == email:
-            row_ix = i; break
+            row_ix = i
+            break
     if row_ix is None:
         return False
     if ix_tg is None:
         header.append("Telegram")
         api._request_with_retry(ws.update, "A1", [header])
         ix_tg = len(header) - 1
-    
+
     # надёжная запись в одну ячейку
     try:
         api._request_with_retry(ws.update_cell, row_ix, ix_tg + 1, str(chat_id))
@@ -70,21 +86,25 @@ def _set_user_telegram(email: str, chat_id: int | str) -> bool:
         api._request_with_retry(ws.update, cell, [[str(chat_id)]])
     return True
 
+
 def main():
     log.info("Telegram linker bot started")
     base = _base()
     offset: Optional[int] = None
-    hello = ("👋 Привет! Отправь свой рабочий e-mail (например, user@company.com), "
-             "и я привяжу этот чат к уведомлениям системы.")
+    hello = (
+        "👋 Привет! Отправь свой рабочий e-mail (например, user@company.com), "
+        "и я привяжу этот чат к уведомлениям системы."
+    )
     while True:
         try:
             params = {"timeout": 60}
             if offset is not None:
                 params["offset"] = offset
-            r = requests.get(base+"/getUpdates", params=params, timeout=70)
+            r = requests.get(base + "/getUpdates", params=params, timeout=70)
             data = r.json()
             if not data.get("ok"):
-                time.sleep(2); continue
+                time.sleep(2)
+                continue
             for upd in data.get("result", []):
                 offset = upd["update_id"] + 1
                 msg = upd.get("message") or {}
@@ -93,18 +113,31 @@ def main():
                 if not chat_id:
                     continue
                 if text.startswith("/start"):
-                    _send(chat_id, hello); continue
+                    _send(chat_id, hello)
+                    continue
                 if EMAIL_RE.match(text):
                     email = text.lower()
                     ok = _set_user_telegram(email, chat_id)
-                    _send(chat_id, "✅ Готово! Связал <b>%s</b> с этим чатом." % email if ok
-                                   else "⚠️ Не нашёл e-mail <b>%s</b> в списке пользователей." % email)
+                    _send(
+                        chat_id,
+                        (
+                            "✅ Готово! Связал <b>%s</b> с этим чатом." % email
+                            if ok
+                            else "⚠️ Не нашёл e-mail <b>%s</b> в списке пользователей."
+                            % email
+                        ),
+                    )
                 else:
-                    _send(chat_id, "Это не похоже на e-mail. Пришлите адрес вида <b>user@company.com</b>.")
+                    _send(
+                        chat_id,
+                        "Это не похоже на e-mail. Пришлите адрес вида <b>user@company.com</b>.",
+                    )
         except KeyboardInterrupt:
             break
         except Exception as e:
-            log.warning("Loop error: %s", e); time.sleep(3)
+            log.warning("Loop error: %s", e)
+            time.sleep(3)
+
 
 if __name__ == "__main__":
     main()

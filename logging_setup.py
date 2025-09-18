@@ -17,8 +17,8 @@ _ROOT_LOGGER_CONFIGURED = False
 # ----------------------------- PII masking -----------------------------------
 def _mask_pii(msg: str) -> str:
     """Грубое маскирование email и телефонов в логах."""
-    msg = re.sub(r'([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})', r'***@\2', msg)
-    msg = re.sub(r'\+?\d[\d\s\-()]{6,}\d', '***PHONE***', msg)
+    msg = re.sub(r"([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})", r"***@\2", msg)
+    msg = re.sub(r"\+?\d[\d\s\-()]{6,}\d", "***PHONE***", msg)
     return msg
 
 
@@ -109,7 +109,9 @@ def _setup_logging_impl(
     # Одноразовые действия при первом вызове
     if not _LOGGING_INITIALIZED:
         root = logging.getLogger()
-        root.setLevel(logging.DEBUG)  # root на DEBUG; фактический уровень задают хендлеры
+        root.setLevel(
+            logging.DEBUG
+        )  # root на DEBUG; фактический уровень задают хендлеры
         for h in list(root.handlers):
             root.removeHandler(h)
 
@@ -122,12 +124,16 @@ def _setup_logging_impl(
         _LOGGING_INITIALIZED = True
 
     fmt = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Файловый хендлер с ротацией
     fh = RotatingFileHandler(
-        log_path, maxBytes=rotate_mb * 1024 * 1024, backupCount=backup_count, encoding="utf-8"
+        log_path,
+        maxBytes=rotate_mb * 1024 * 1024,
+        backupCount=backup_count,
+        encoding="utf-8",
     )
     fh.setLevel(level)
     fh.setFormatter(fmt)

@@ -2,16 +2,12 @@
 from __future__ import annotations
 import sqlite3
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import datetime
 
 from config import (
     PERSONAL_RULES_ENABLED,
-    PERSONAL_WINDOW_MIN,
-    PERSONAL_STATUS_LIMIT_PER_WINDOW,
-    LOCAL_DB_PATH,   # путь к вашей локальной БД, как в user_app.db_local
+    LOCAL_DB_PATH,  # путь к вашей локальной БД, как в user_app.db_local
 )
-from telegram_bot.notifier import TelegramNotifier
 from notifications.engine import record_status_event, long_status_check
 
 # Импортируем модуль для работы с общим подключением к БД
@@ -29,8 +25,10 @@ CREATE TABLE IF NOT EXISTS status_events (
 CREATE INDEX IF NOT EXISTS idx_status_events_email_ts ON status_events(email, ts_utc);
 """
 
+
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(datetime.UTC).replace(microsecond=0).isoformat()
+
 
 def _open_db() -> sqlite3.Connection:
     con = sqlite3.connect(LOCAL_DB_PATH)
@@ -38,7 +36,10 @@ def _open_db() -> sqlite3.Connection:
     con.executescript(DDL)
     return con
 
-def on_status_committed(email: str, status_name: str, ts_iso: Optional[str] = None) -> None:
+
+def on_status_committed(
+    email: str, status_name: str, ts_iso: str | None = None
+) -> None:
     """Фиксирует событие статуса и даёт движку шанс сработать по правилам status_window."""
     if not PERSONAL_RULES_ENABLED:
         return
@@ -53,7 +54,10 @@ def on_status_committed(email: str, status_name: str, ts_iso: Optional[str] = No
     except Exception as e:
         log.exception("personal_rules.on_status_committed error: %s", e)
 
-def check_long_status(email: str, status_name: str, started_iso: str, elapsed_min: int) -> None:
+
+def check_long_status(
+    email: str, status_name: str, started_iso: str, elapsed_min: int
+) -> None:
     """
     Проверяет длительные статусы и передаёт информацию в движок правил.
     """
@@ -67,32 +71,36 @@ def check_long_status(email: str, status_name: str, started_iso: str, elapsed_mi
     try:
         # Преобразуем строку в datetime с учетом таймзоны
         started_dt = datetime.fromisoformat(started_iso)
-        
+
         # Если тайзона отсутствует — считаем это ЛОКАЛЬНЫМ временем машины
         local_tz = datetime.now().astimezone().tzinfo
         if started_dt.tzinfo is None:
             started_local = started_dt.replace(tzinfo=local_tz)
         else:
             started_local = started_dt.astimezone(local_tz)
-        
+
         # Нормализуем в UTC для расчётов
-        started_utc = started_local.astimezone(timezone.utc)
-        
+        started_utc = started_local.astimezone(datetime.UTC)
+
         # Добавляем отладочную информацию
         log.debug(
             "long-status poll: status=%s started_local=%s started_utc=%s elapsed_min=%d",
-            status_name, started_local.isoformat(), started_utc.isoformat(), elapsed_min
+            status_name,
+            started_local.isoformat(),
+            started_utc.isoformat(),
+            elapsed_min,
         )
-        
+
         # Передаём в движок правил: он сам решит, какие long_status правила совпадают
         long_status_check(
-            email=email, 
-            status_name=status_name, 
-            started_dt=started_utc, 
-            elapsed_min=elapsed_min
+            email=email,
+            status_name=status_name,
+            started_dt=started_utc,
+            elapsed_min=elapsed_min,
         )
     except Exception as e:
         log.exception("personal_rules.check_long_status error: %s", e)
+
 
 def poll_long_running_local() -> None:
     """
@@ -106,15 +114,17 @@ def poll_long_running_local() -> None:
     try:
         with db_local.read_cursor() as cur:
             # Читаем нужные записи о длительных статусах
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT email, status_name, started_iso, elapsed_min
                 FROM long_running_statuses
                 WHERE elapsed_min > 0
-            """)
-            
+            """
+            )
+
             for row in cur.fetchall():
                 email, status_name, started_iso, elapsed_min = row
                 check_long_status(email, status_name, started_iso, elapsed_min)
-                
+
     except Exception as e:
         log.exception("personal_rules.poll_long_running_local error: %s", e)

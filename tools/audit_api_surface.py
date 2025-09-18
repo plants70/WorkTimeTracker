@@ -17,6 +17,7 @@ from typing import Dict, Set, List, Tuple
 
 PROJECT_EXTS = {".py"}
 
+
 def walk_py(root: Path) -> List[Path]:
     files = []
     for dp, dn, fn in os.walk(root):
@@ -28,8 +29,10 @@ def walk_py(root: Path) -> List[Path]:
                 files.append(p)
     return files
 
+
 def load_api_methods() -> Set[str]:
     import importlib
+
     m = importlib.import_module("sheets_api")
     cls = getattr(m, "SheetsAPI")
     methods = set()
@@ -38,6 +41,7 @@ def load_api_methods() -> Set[str]:
             continue
         methods.add(name)
     return methods
+
 
 class Finder(ast.NodeVisitor):
     def __init__(self):
@@ -52,6 +56,7 @@ class Finder(ast.NodeVisitor):
             kw = tuple(sorted([k.arg for k in node.keywords if k.arg]))
             self.calls.setdefault(method, set()).add((recv, kw))
         self.generic_visit(node)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -90,6 +95,7 @@ def main():
     print("\n=== Missing in SheetsAPI ===")
     for m in missing:
         print(" *", m)
+
 
 if __name__ == "__main__":
     main()

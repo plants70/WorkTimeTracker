@@ -5,8 +5,8 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, Iterable, Tuple, List
+from datetime import datetime, timedelta
+from typing import Any
 import logging
 from contextlib import contextmanager
 
@@ -33,9 +33,9 @@ def _connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(
         path,
         timeout=60,
-        isolation_level=None,        # autocommit; транзакции начинаем руками
-        check_same_thread=False,     # используем общий коннект из разных потоков
-        uri=False
+        isolation_level=None,  # autocommit; транзакции начинаем руками
+        check_same_thread=False,  # используем общий коннект из разных потоков
+        uri=False,
     )
     cur = conn.cursor()
     # стабильность под нагрузкой
@@ -52,7 +52,7 @@ def _apply_migrations_once(conn: sqlite3.Connection) -> None:
     global _MIGRATIONS_DONE
     if _MIGRATIONS_DONE:
         return
-    
+
     try:
         apply_migrations(conn)
         _MIGRATIONS_DONE = True
@@ -61,7 +61,7 @@ def _apply_migrations_once(conn: sqlite3.Connection) -> None:
         logger.warning("DB migrations failed: %s", e)
 
 
-def init_db(path_main: str, path_fallback: str) -> Tuple[sqlite3.Connection, str]:
+def init_db(path_main: str, path_fallback: str) -> tuple[sqlite3.Connection, str]:
     """
     Инициализируем РОВНО ОДИН коннект на процесс и храним его в модуле.
     Без переходов в :memory:.
@@ -69,7 +69,7 @@ def init_db(path_main: str, path_fallback: str) -> Tuple[sqlite3.Connection, str
     global _CONN, _DB_PATH
     if _CONN:
         return _CONN, _DB_PATH
-    
+
     last_err = None
     # 5 попыток на основной путь с экспоненциальной задержкой
     for i in range(5):
@@ -85,7 +85,7 @@ def init_db(path_main: str, path_fallback: str) -> Tuple[sqlite3.Connection, str
                 time.sleep(1.5 * (i + 1))
                 continue
             break
-    
+
     # пробуем резервный (без :memory:)
     try:
         conn = _connect(path_fallback)
@@ -95,14 +95,20 @@ def init_db(path_main: str, path_fallback: str) -> Tuple[sqlite3.Connection, str
         logger.warning("Используется резервный путь локальной БД: %s", path_fallback)
         return _CONN, _DB_PATH
     except Exception as e2:
-        logger.critical("Не удалось открыть БД ни по основному, ни по резервному пути: %s; %s", last_err, e2)
+        logger.critical(
+            "Не удалось открыть БД ни по основному, ни по резервному пути: %s; %s",
+            last_err,
+            e2,
+        )
         raise
 
 
 def get_conn() -> sqlite3.Connection:
     """Получить глобальное соединение с БД."""
     if not _CONN:
-        raise RuntimeError("DB не инициализирована. Вызови init_db() при старте приложения.")
+        raise RuntimeError(
+            "DB не инициализирована. Вызови init_db() при старте приложения."
+        )
     return _CONN
 
 
@@ -185,11 +191,11 @@ class LocalDB:
     Авто-открытие, самовосстановление, безопасное закрытие.
     """
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
-        self.conn: Optional[sqlite3.Connection] = None
-        self.db_path: Optional[Path] = None
+    def __init__(self, db_path: str | None = None) -> None:
+        self.conn: sqlite3.Connection | None = None
+        self.db_path: Path | None = None
         self._lock = threading.RLock()
-        self._opened_path: Optional[Path] = None
+        self._opened_path: Path | None = None
 
         # автозагрузка как раньше
         self._bootstrap_open(db_path or str(LOCAL_DB_PATH))
@@ -200,11 +206,11 @@ class LocalDB:
     def _bootstrap_open(self, primary_path: str) -> None:
         """Пробуем основной путь, затем домашний, затем ':memory:'."""
         home_fallback = Path.home() / "WorkTimeTracker" / "local_backup.db"
-        
+
         try:
             self.conn, self.db_path = init_db(primary_path, str(home_fallback))
             self._opened_path = Path(self.db_path)
-            
+
             # профилактика
             self.cleanup_old_action_logs(days=MAX_HISTORY_DAYS)
             logger.info("Локальная БД успешно инициализирована: %s", self.db_path)
@@ -221,7 +227,9 @@ class LocalDB:
             self.conn.execute("PRAGMA foreign_keys=ON;")
             self._ensure_schema()
             self._opened_path = None
-            logger.warning("Локальная БД запущена в режиме ':memory:' (без записи на диск).")
+            logger.warning(
+                "Локальная БД запущена в режиме ':memory:' (без записи на диск)."
+            )
 
     def open(self, db_path: str) -> None:
         with self._lock:
@@ -233,27 +241,33 @@ class LocalDB:
                 # Более устойчивые настройки под параллельные операции
                 self.conn = sqlite3.connect(
                     str(self.db_path),
-                    timeout=30,             # ждать до 30с при блокировке
-                    check_same_thread=False # доступ из разных потоков GUI/таймеров
+                    timeout=30,  # ждать до 30с при блокировке
+                    check_same_thread=False,  # доступ из разных потоков GUI/таймеров
                 )
                 try:
-                    self.conn.execute("PRAGMA journal_mode=WAL;")      # лучше для конкуренции
-                    self.conn.execute("PRAGMA busy_timeout=5000;")     # 5с на блокировки внутри sqlite
-                    self.conn.execute("PRAGMA synchronous=NORMAL;")    # быстрее, достаточно надёжно
+                    self.conn.execute(
+                        "PRAGMA journal_mode=WAL;"
+                    )  # лучше для конкуренции
+                    self.conn.execute(
+                        "PRAGMA busy_timeout=5000;"
+                    )  # 5с на блокировки внутри sqlite
+                    self.conn.execute(
+                        "PRAGMA synchronous=NORMAL;"
+                    )  # быстрее, достаточно надёжно
                     self.conn.execute("PRAGMA foreign_keys=ON;")
                 except Exception as e:
                     logger.warning("PRAGMA setup failed: %s", e)
-                
+
                 self._ensure_schema()
                 _apply_migrations_once(self.conn)
-                
+
                 self._opened_path = self.db_path
                 # профилактика
                 self.cleanup_old_action_logs(days=MAX_HISTORY_DAYS)
                 logger.info("Локальная БД успешно инициализирована: %s", self.db_path)
             except sqlite3.Error as e:
                 self.conn = None
-                raise LocalDBError(f"Ошибка инициализации БД: {e}")
+                raise LocalDBError(f"Ошибка инициализации БД: {e}") from e
 
     def _ensure_open(self) -> None:
         if self.conn is not None:
@@ -285,15 +299,22 @@ class LocalDB:
             cur = conn.cursor()
 
             # Если есть старая таблица logs (без нужных колонок) — переименуем
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='logs';")
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='logs';"
+            )
             if cur.fetchone():
                 cur.execute("PRAGMA table_info(logs);")
                 cols = [r[1] for r in cur.fetchall()]
-                required = {'session_id', 'email', 'name', 'action_type', 'timestamp'}
+                required = {"session_id", "email", "name", "action_type", "timestamp"}
                 if not required.issubset(set(cols)):
-                    legacy_name = f"app_logs_legacy_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    legacy_name = (
+                        f"app_logs_legacy_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    )
                     cur.execute(f"ALTER TABLE logs RENAME TO {legacy_name};")
-                    logger.warning("Обнаружена старая схема 'logs' — переименована в %s", legacy_name)
+                    logger.warning(
+                        "Обнаружена старая схема 'logs' — переименована в %s",
+                        legacy_name,
+                    )
 
             # Основная таблица действий
             cur.execute(
@@ -337,22 +358,34 @@ class LocalDB:
             # Индексы (безопасно: проверяем наличие колонок)
             cur.execute("PRAGMA table_info(logs);")
             cols = {r[1] for r in cur.fetchall()}
-            if 'email' in cols:
+            if "email" in cols:
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_email ON logs(email);")
-            if 'synced' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_synced ON logs(synced);")
-            if 'timestamp' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);")
-            if 'session_id' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_session ON logs(session_id);")
+            if "synced" in cols:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_logs_synced ON logs(synced);"
+                )
+            if "timestamp" in cols:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);"
+                )
+            if "session_id" in cols:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_logs_session ON logs(session_id);"
+                )
 
             # Новые индексы под частые запросы
-            if 'synced' in cols and 'priority' in cols and 'id' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_synced_priority_id ON logs(synced, priority, id)")
-            if 'email' in cols and 'session_id' in cols and 'status_end_time' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_email_session_end ON logs(email, session_id, status_end_time)")
-            if 'action_type' in cols:
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_action_type ON logs(action_type)")
+            if "synced" in cols and "priority" in cols and "id" in cols:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_logs_synced_priority_id ON logs(synced, priority, id)"
+                )
+            if "email" in cols and "session_id" in cols and "status_end_time" in cols:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_logs_email_session_end ON logs(email, session_id, status_end_time)"
+                )
+            if "action_type" in cols:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_logs_action_type ON logs(action_type)"
+                )
 
             # Триггеры
             cur.execute(
@@ -419,11 +452,14 @@ class LocalDB:
         self._ensure_open()
         if self.conn is None:
             return -1
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(datetime.UTC).isoformat()
         with self._lock:
             with write_tx() as conn:
                 cur = conn.cursor()
-                cur.execute("INSERT INTO app_logs (ts, level, message) VALUES (?, ?, ?)", (ts, level, message))
+                cur.execute(
+                    "INSERT INTO app_logs (ts, level, message) VALUES (?, ?, ?)",
+                    (ts, level, message),
+                )
                 return int(cur.lastrowid)
 
     def cleanup_old_logs(self, days: int = 30) -> int:
@@ -431,7 +467,7 @@ class LocalDB:
         self._ensure_open()
         if self.conn is None:
             return 0
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(datetime.UTC) - timedelta(days=days)).isoformat()
         with self._lock:
             with write_tx() as conn:
                 cur = conn.cursor()
@@ -444,7 +480,7 @@ class LocalDB:
         self._ensure_open()
         if self.conn is None:
             return 0
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(datetime.UTC) - timedelta(days=days)).isoformat()
         with self._lock:
             with write_tx() as conn:
                 cur = conn.cursor()
@@ -467,18 +503,21 @@ class LocalDB:
                 row = cur.fetchone()
                 return bool(row and int(row[0]) == 0)
 
-    def get_action_by_id(self, action_id: int) -> Optional[Tuple]:
+    def get_action_by_id(self, action_id: int) -> tuple | None:
         """Получает запись действия по ID."""
         self._ensure_open()
         if self.conn is None:
             return None
         with self._lock:
             with read_cursor() as cur:
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT id, session_id, email, name, status, action_type, comment,
                            timestamp, synced, sync_attempts, last_sync_attempt,
                            priority, status_start_time, status_end_time, reason, user_group
-                    FROM logs WHERE id = ?""", (action_id,))
+                    FROM logs WHERE id = ?""",
+                    (action_id,),
+                )
                 return cur.fetchone()
 
     # ------------------------------------------------------------------ #
@@ -493,37 +532,47 @@ class LocalDB:
             with write_tx() as conn:
                 self._ensure_users_cache(conn)
                 cur = conn.cursor()
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO users_cache (email, name, role, "group", shift_hours, telegram_login, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
                     ON CONFLICT(email) DO UPDATE SET
                         name=excluded.name, role=excluded.role, "group"=excluded."group",
                         shift_hours=excluded.shift_hours, telegram_login=excluded.telegram_login,
                         updated_at=datetime('now')
-                """, (
-                    (user.get("email") or "").strip().lower(),
-                    user.get("name") or "",
-                    user.get("role") or "специалист",
-                    user.get("group") or "",
-                    user.get("shift_hours") or "8 часов",
-                    user.get("telegram_login") or "",
-                ))
+                """,
+                    (
+                        (user.get("email") or "").strip().lower(),
+                        user.get("name") or "",
+                        user.get("role") or "специалист",
+                        user.get("group") or "",
+                        user.get("shift_hours") or "8 часов",
+                        user.get("telegram_login") or "",
+                    ),
+                )
 
-    def get_user_from_cache(self, email: str) -> Optional[dict]:
+    def get_user_from_cache(self, email: str) -> dict | None:
         """Получает пользователя из кэша по email."""
         self._ensure_open()
         if self.conn is None:
             return None
         with self._lock:
             with read_cursor() as cur:
-                cur.execute("""SELECT email, name, role, "group", shift_hours, telegram_login
-                               FROM users_cache WHERE email = ?""", ((email or "").strip().lower(),))
+                cur.execute(
+                    """SELECT email, name, role, "group", shift_hours, telegram_login
+                               FROM users_cache WHERE email = ?""",
+                    ((email or "").strip().lower(),),
+                )
                 row = cur.fetchone()
                 if not row:
                     return None
                 return {
-                    "email": row[0], "name": row[1], "role": row[2],
-                    "group": row[3], "shift_hours": row[4], "telegram_login": row[5],
+                    "email": row[0],
+                    "name": row[1],
+                    "role": row[2],
+                    "group": row[3],
+                    "shift_hours": row[4],
+                    "telegram_login": row[5],
                 }
 
     # ------------------------------------------------------------------ #
@@ -536,25 +585,27 @@ class LocalDB:
         self,
         email: str,
         name: str,
-        status: Optional[str],
+        status: str | None,
         action_type: str,
-        comment: Optional[str] = None,
+        comment: str | None = None,
         immediate_sync: bool = False,
         priority: int = 1,
-        session_id: Optional[str] = None,
-        status_start_time: Optional[str] = None,
-        status_end_time: Optional[str] = None,
-        reason: Optional[str] = None,
-        user_group: Optional[str] = None,
+        session_id: str | None = None,
+        status_start_time: str | None = None,
+        status_end_time: str | None = None,
+        reason: str | None = None,
+        user_group: str | None = None,
     ) -> int:
         """Обычная запись (самостоятельная транзакция)."""
         if not email or not name or not action_type:
-            raise LocalDBError("Обязательные поля не заполнены (email/name/action_type)")
+            raise LocalDBError(
+                "Обязательные поля не заполнены (email/name/action_type)"
+            )
 
         if comment and len(comment) > MAX_COMMENT_LENGTH:
             comment = comment[:MAX_COMMENT_LENGTH]
 
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(datetime.UTC).isoformat()
         session_id = session_id or self._gen_session_id(email)
         prio = max(1, min(3, int(priority or 1)))
 
@@ -591,9 +642,11 @@ class LocalDB:
                     return int(cur.lastrowid)
         except sqlite3.Error as e:
             if "Duplicate LOGOUT action" in str(e):
-                logger.warning("Попытка дублирования LOGOUT (session_id=%s)", session_id)
+                logger.warning(
+                    "Попытка дублирования LOGOUT (session_id=%s)", session_id
+                )
                 return -1
-            raise LocalDBError(f"Ошибка записи в лог: {e}")
+            raise LocalDBError(f"Ошибка записи в лог: {e}") from e
 
     def log_action_tx(
         self,
@@ -601,15 +654,15 @@ class LocalDB:
         *,
         email: str,
         name: str,
-        status: Optional[str],
+        status: str | None,
         action_type: str,
-        comment: Optional[str] = None,
+        comment: str | None = None,
         priority: int = 1,
-        session_id: Optional[str] = None,
-        status_start_time: Optional[str] = None,
-        status_end_time: Optional[str] = None,
-        reason: Optional[str] = None,
-        user_group: Optional[str] = None,
+        session_id: str | None = None,
+        status_start_time: str | None = None,
+        status_end_time: str | None = None,
+        reason: str | None = None,
+        user_group: str | None = None,
         **_ignore: object,
     ) -> int:
         """
@@ -617,12 +670,14 @@ class LocalDB:
         надо зафиксировать несколько шагов атомарно).
         """
         if not email or not name or not action_type:
-            raise LocalDBError("Обязательные поля не заполнены (email/name/action_type)")
+            raise LocalDBError(
+                "Обязательные поля не заполнены (email/name/action_type)"
+            )
 
         if comment and len(comment) > MAX_COMMENT_LENGTH:
             comment = comment[:MAX_COMMENT_LENGTH]
 
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(datetime.UTC).isoformat()
         session_id = session_id or self._gen_session_id(email)
         prio = max(1, min(3, int(priority or 1)))
 
@@ -653,11 +708,13 @@ class LocalDB:
             return int(cur.lastrowid)
         except sqlite3.Error as e:
             if "Duplicate LOGOUT action" in str(e):
-                logger.warning("Попытка дублирования LOGOUT (session_id=%s)", session_id)
+                logger.warning(
+                    "Попытка дублирования LOGOUT (session_id=%s)", session_id
+                )
                 return -1
-            raise LocalDBError(f"Ошибка записи в лог: {e}")
+            raise LocalDBError(f"Ошибка записи в лог: {e}") from e
 
-    def get_unsynced_actions(self, limit: int = 100) -> List[Tuple]:
+    def get_unsynced_actions(self, limit: int = 100) -> list[tuple]:
         self._ensure_open()
         if self.conn is None:
             return []
@@ -687,7 +744,7 @@ class LocalDB:
                 row = cur.fetchone()
                 return int(row[0] or 0)
 
-    def mark_actions_synced(self, ids: List[int]) -> None:
+    def mark_actions_synced(self, ids: list[int]) -> None:
         if not ids:
             return
         self._ensure_open()
@@ -705,10 +762,10 @@ class LocalDB:
                            last_sync_attempt = ?
                      WHERE id IN ({placeholders})
                     """,
-                    [datetime.now(timezone.utc).isoformat(), *ids],
+                    [datetime.now(datetime.UTC).isoformat(), *ids],
                 )
 
-    def check_existing_logout(self, email: str, session_id: Optional[str] = None) -> bool:
+    def check_existing_logout(self, email: str, session_id: str | None = None) -> bool:
         self._ensure_open()
         if self.conn is None:
             return False
@@ -731,9 +788,9 @@ class LocalDB:
         conn: sqlite3.Connection,
         email: str,
         session_id: str,
-        end_time: Optional[str] = None,
-        reason: Optional[str] = None,
-    ) -> Optional[int]:
+        end_time: str | None = None,
+        reason: str | None = None,
+    ) -> int | None:
         """
         Идемпотентно закрывает последнюю «открытую» запись статуса (status_end_time IS NULL)
         для заданных (email, session_id). Работает внутри переданной транзакции `conn`.
@@ -761,15 +818,15 @@ class LocalDB:
             rid = int(row[0])
             # Нормализуем время окончания
             if end_time is None:
-                ts_end = datetime.now(timezone.utc).isoformat()
+                ts_end = datetime.now(datetime.UTC).isoformat()
             elif isinstance(end_time, datetime):
-                ts_end = end_time.astimezone(timezone.utc).isoformat()
+                ts_end = end_time.astimezone(datetime.UTC).isoformat()
             else:
                 ts_end = str(end_time)
 
             if reason is None:
                 cur.execute(
-                    "UPDATE logs SET status_end_time=? WHERE id=?", 
+                    "UPDATE logs SET status_end_time=? WHERE id=?",
                     (ts_end, rid),
                 )
             else:
@@ -779,13 +836,13 @@ class LocalDB:
                 )
             return rid
         except sqlite3.Error as e:
-            raise LocalDBError(f"Ошибка закрытия последнего статуса: {e}")
+            raise LocalDBError(f"Ошибка закрытия последнего статуса: {e}") from e
 
     def finish_last_status(
         self,
         email: str,
         session_id: str,
-    ) -> Optional[int]:
+    ) -> int | None:
         """
         Бэк-компат: та же операция, но с автосозданием соединения.
         Используется старым кодом; новые вызовы должны идти через finish_last_status_tx(...).
@@ -794,7 +851,7 @@ class LocalDB:
             return self.finish_last_status_tx(conn, email, session_id)
 
     # --- совместимость с GUI: ожидается суффикс _tx ---
-    def finish_last_status_tx_compat(self, email: str, session_id: str) -> Optional[int]:
+    def finish_last_status_tx_compat(self, email: str, session_id: str) -> int | None:
         """
         Совместимость: GUI вызывает метод с _tx, здесь просто делегируем на фактический finish_last_status.
         Логика finish_last_status уже использует транзакцию (write_tx), поэтому вторичную обертку не делаем.
@@ -805,7 +862,7 @@ class LocalDB:
             logger.error(f"finish_last_status_tx failed: {e}")
             return None
 
-    def get_last_unfinished_session(self, email: str) -> Optional[Dict[str, Any]]:
+    def get_last_unfinished_session(self, email: str) -> dict[str, Any] | None:
         self._ensure_open()
         if self.conn is None:
             return None
@@ -828,10 +885,10 @@ class LocalDB:
                 row = cur.fetchone()
                 return {"session_id": row[0], "timestamp": row[1]} if row else None
 
-    def get_active_session(self, email: str) -> Optional[Dict[str, Any]]:
+    def get_active_session(self, email: str) -> dict[str, Any] | None:
         return self.get_last_unfinished_session(email)
 
-    def get_current_user_email(self) -> Optional[str]:
+    def get_current_user_email(self) -> str | None:
         self._ensure_open()
         if self.conn is None:
             return None
@@ -852,8 +909,9 @@ class LocalDB:
 
 
 # Синглтон (при необходимости)
-_DB_SINGLETON: Optional[LocalDB] = None
+_DB_SINGLETON: LocalDB | None = None
 _SINGLETON_LOCK = threading.Lock()
+
 
 def get_db() -> LocalDB:
     global _DB_SINGLETON
@@ -866,12 +924,10 @@ def get_db() -> LocalDB:
 
 # Вспомогательная транзакция для внешнего кода (GUI/сервисы)
 @contextmanager
-def write_tx_external(db_path: Optional[str] = None):
+def write_tx_external(db_path: str | None = None):
     """Вспомогательная транзакция для внешнего кода (GUI/сервисы)."""
     path = db_path or str(LOCAL_DB_PATH)
-    conn = sqlite3.connect(
-        path, timeout=30, check_same_thread=False
-    )
+    conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
@@ -892,8 +948,12 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="LocalDB helper")
     ap.add_argument("--path", type=str, default=str(LOCAL_DB_PATH))
-    ap.add_argument("--add-log", type=str, default=None, help="Добавить app_log (level:msg)")
-    ap.add_argument("--cleanup-days", type=int, default=None, help="Удалить app_logs старше N дней")
+    ap.add_argument(
+        "--add-log", type=str, default=None, help="Добавить app_log (level:msg)"
+    )
+    ap.add_argument(
+        "--cleanup-days", type=int, default=None, help="Удалить app_logs старше N дней"
+    )
     args = ap.parse_args()
 
     db = LocalDB(args.path)

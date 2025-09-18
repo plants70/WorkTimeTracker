@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Dict, Optional
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sheets_api import SheetsAPIError, get_sheets_api
 from config import (
@@ -31,7 +30,7 @@ class AdminRepo:
     # -------------------------------------------------------------------------
     # Users
     # -------------------------------------------------------------------------
-    def list_users(self) -> List[Dict[str, str]]:
+    def list_users(self) -> list[dict[str, str]]:
         """
         Возвращает список пользователей как список словарей (колонки по заголовку листа Users).
         """
@@ -46,16 +45,21 @@ class AdminRepo:
             if not values:
                 return []
             header = values[0]
-            out: List[Dict[str, str]] = []
+            out: list[dict[str, str]] = []
             for row in values[1:]:
                 if any((c or "").strip() for c in row):
-                    out.append({header[i]: (row[i] if i < len(header) else "") for i in range(len(header))})
+                    out.append(
+                        {
+                            header[i]: (row[i] if i < len(header) else "")
+                            for i in range(len(header))
+                        }
+                    )
             return out
         except Exception as e:
             logger.exception("Не удалось получить список пользователей: %s", e)
             return []
 
-    def add_or_update_user(self, user: Dict[str, str]) -> bool:
+    def add_or_update_user(self, user: dict[str, str]) -> bool:
         """
         Добавляет или обновляет пользователя (по Email).
         """
@@ -114,7 +118,7 @@ class AdminRepo:
     # -------------------------------------------------------------------------
     # Active sessions
     # -------------------------------------------------------------------------
-    def get_active_sessions(self) -> List[Dict]:
+    def get_active_sessions(self) -> list[dict]:
         """
         Возвращает все записи листа ActiveSessions (словари колонок).
         """
@@ -126,7 +130,11 @@ class AdminRepo:
                 # Фолбэк: читаем лист напрямую и фильтруем active
                 ws = self.sheets._get_ws(ACTIVE_SESSIONS_SHEET)  # type: ignore[attr-defined]
                 table = self.sheets._read_table(ws)  # type: ignore[attr-defined]
-                sessions = [r for r in table if str(r.get("Status", "")).strip().lower() == "active"]
+                sessions = [
+                    r
+                    for r in table
+                    if str(r.get("Status", "")).strip().lower() == "active"
+                ]
             return sessions or []
         except Exception as e:
             logger.exception("get_active_sessions error: %s", e)
@@ -144,19 +152,31 @@ class AdminRepo:
             em = (email or "").strip().lower()
             sessions = self.get_active_sessions()  # уже фильтрует Status=='active'
             # отбираем только по данному email
-            same_user = [r for r in sessions if (str(r.get("Email","")).strip().lower() == em)]
+            same_user = [
+                r for r in sessions if (str(r.get("Email", "")).strip().lower() == em)
+            ]
             if not same_user:
                 logger.info("Force logout: активная сессия не найдена для %s", email)
                 return False
+
             # выбираем последнюю по LoginTime (если формат строки стабилен) или по порядку
             def _key(row: dict):
-                return (str(row.get("LoginTime","")).strip(), str(row.get("SessionID","")).strip())
+                return (
+                    str(row.get("LoginTime", "")).strip(),
+                    str(row.get("SessionID", "")).strip(),
+                )
+
             row = sorted(same_user, key=_key)[-1]
-            sid = str(row.get("SessionID","")).strip()
+            sid = str(row.get("SessionID", "")).strip()
             if not sid:
-                logger.info("Force logout: нет SessionID у последней активной строки для %s", email)
+                logger.info(
+                    "Force logout: нет SessionID у последней активной строки для %s",
+                    email,
+                )
                 return False
-            now_iso = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+            now_iso = (
+                datetime.now(datetime.UTC).astimezone().isoformat(timespec="seconds")
+            )
             # корректное завершение активной строки
             ok = False
             if hasattr(self.sheets, "finish_active_session"):
@@ -168,7 +188,9 @@ class AdminRepo:
             if ok:
                 logger.info("Force logout success for %s (session %s)", email, sid)
             else:
-                logger.warning("Force logout: не удалось завершить сессию %s для %s", sid, email)
+                logger.warning(
+                    "Force logout: не удалось завершить сессию %s для %s", sid, email
+                )
             return ok
         except Exception as e:
             logger.exception("force_logout error for %s: %s", email, e)
@@ -177,7 +199,7 @@ class AdminRepo:
     # -------------------------------------------------------------------------
     # Schedule (Shift calendar)
     # -------------------------------------------------------------------------
-    def _list_titles(self) -> List[str]:
+    def _list_titles(self) -> list[str]:
         """
         Возвращает список названий листов книги.
         """
@@ -189,14 +211,16 @@ class AdminRepo:
 
         # Фолбэк через открытую книгу
         try:
-            spreadsheet = self.sheets._request_with_retry(self.sheets.client.open, GOOGLE_SHEET_NAME)
+            spreadsheet = self.sheets._request_with_retry(
+                self.sheets.client.open, GOOGLE_SHEET_NAME
+            )
             worksheets = self.sheets._request_with_retry(spreadsheet.worksheets)
             return [ws.title for ws in worksheets]
         except Exception as e:
             logger.warning("Не удалось получить список листов: %s", e)
             return []
 
-    def _pick_schedule_title(self, titles: List[str]) -> Optional[str]:
+    def _pick_schedule_title(self, titles: list[str]) -> str | None:
         """
         Выбирает название листа графика из известных вариантов.
         """
@@ -206,7 +230,7 @@ class AdminRepo:
                 return cand
         return None
 
-    def get_shift_calendar(self) -> List[List[str]]:
+    def get_shift_calendar(self) -> list[list[str]]:
         """
         Возвращает таблицу графика как список списков:
         [ [header...], [row1...], ... ]. Если лист отсутствует — [].

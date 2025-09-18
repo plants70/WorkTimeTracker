@@ -10,65 +10,113 @@ import json
 import os
 import platform
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
-import textwrap
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterator, Optional
 
 # ---------- Аргументы CLI ----------
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Собрать технический отчёт по проекту: пути, код, таблицы, БД, окружение."
     )
-    p.add_argument("--project-root", type=Path, default=Path.cwd(),
-                   help="Корень проекта (по умолчанию текущая папка).")
-    p.add_argument("--output", type=Path, default=Path("./diagnostics_report.txt"),
-                   help="Куда сохранить итоговый отчёт (txt).")
-    p.add_argument("--full-code", action="store_true",
-                   help="Положить в отчёт полный текст исходников (по расширениям).")
-    p.add_argument("--code-extensions", default="py,yaml,yml,ini,toml,env,txt,md,json,sql,sh,ps1,bat,js,ts,css,html",
-                   help="Какие расширения файлов включать в раздел с кодом (через запятую).")
-    p.add_argument("--exclude-dirs", default=".git,.venv,venv,env,__pycache__,build,dist,node_modules,.mypy_cache,.pytest_cache,.idea,.vscode",
-                   help="Каталоги, которые исключаем из обхода (через запятую).")
-    p.add_argument("--max-file-kb", type=int, default=256,
-                   help="Максимальный размер одного файла для включения целиком (КБ). Больше — обрезаем.")
-    p.add_argument("--max-total-mb", type=int, default=16,
-                   help="Глобальный бюджет на текст исходников (МБ). Дальше начнётся агрессивная обрезка.")
-    p.add_argument("--logs-lines", type=int, default=300,
-                   help="Сколько последних строк читать из каждого лог-файла.")
-    p.add_argument("--db", action="store_true",
-                   help="Включить анализ SQLite-БД.")
-    p.add_argument("--db-path", type=Path,
-                   help="Путь к SQLite-БД. Если не задан, попробуем импортировать из config или найдём автоматически.")
-    p.add_argument("--sheets", action="store_true",
-                   help="Включить анализ Google Sheets (заголовки листов).")
-    p.add_argument("--cred", type=Path,
-                   help="Путь к JSON-ключу сервисного аккаунта (если нельзя импортировать из config).")
-    p.add_argument("--sheet", type=str,
-                   help="ID или имя Google Sheets (если нельзя импортировать из config).")
-    p.add_argument("--headers-only", action="store_true",
-                   help="Для Sheets: только заголовки листов без данных.")
-    p.add_argument("--env", action="store_true",
-                   help="Добавить содержимое .env и переменные окружения (значения секретов редактируются).")
-    p.add_argument("--no-redact", action="store_true",
-                   help="Не редактировать секреты (ОПАСНО).")
-    p.add_argument("--git", action="store_true",
-                   help="Добавить сводку git (ветка, HEAD, статус).")
-    p.add_argument("--pip", action="store_true",
-                   help="Добавить pip freeze.")
+    p.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path.cwd(),
+        help="Корень проекта (по умолчанию текущая папка).",
+    )
+    p.add_argument(
+        "--output",
+        type=Path,
+        default=Path("./diagnostics_report.txt"),
+        help="Куда сохранить итоговый отчёт (txt).",
+    )
+    p.add_argument(
+        "--full-code",
+        action="store_true",
+        help="Положить в отчёт полный текст исходников (по расширениям).",
+    )
+    p.add_argument(
+        "--code-extensions",
+        default="py,yaml,yml,ini,toml,env,txt,md,json,sql,sh,ps1,bat,js,ts,css,html",
+        help="Какие расширения файлов включать в раздел с кодом (через запятую).",
+    )
+    p.add_argument(
+        "--exclude-dirs",
+        default=".git,.venv,venv,env,__pycache__,build,dist,node_modules,.mypy_cache,.pytest_cache,.idea,.vscode",
+        help="Каталоги, которые исключаем из обхода (через запятую).",
+    )
+    p.add_argument(
+        "--max-file-kb",
+        type=int,
+        default=256,
+        help="Максимальный размер одного файла для включения целиком (КБ). Больше — обрезаем.",
+    )
+    p.add_argument(
+        "--max-total-mb",
+        type=int,
+        default=16,
+        help="Глобальный бюджет на текст исходников (МБ). Дальше начнётся агрессивная обрезка.",
+    )
+    p.add_argument(
+        "--logs-lines",
+        type=int,
+        default=300,
+        help="Сколько последних строк читать из каждого лог-файла.",
+    )
+    p.add_argument("--db", action="store_true", help="Включить анализ SQLite-БД.")
+    p.add_argument(
+        "--db-path",
+        type=Path,
+        help="Путь к SQLite-БД. Если не задан, попробуем импортировать из config или найдём автоматически.",
+    )
+    p.add_argument(
+        "--sheets",
+        action="store_true",
+        help="Включить анализ Google Sheets (заголовки листов).",
+    )
+    p.add_argument(
+        "--cred",
+        type=Path,
+        help="Путь к JSON-ключу сервисного аккаунта (если нельзя импортировать из config).",
+    )
+    p.add_argument(
+        "--sheet",
+        type=str,
+        help="ID или имя Google Sheets (если нельзя импортировать из config).",
+    )
+    p.add_argument(
+        "--headers-only",
+        action="store_true",
+        help="Для Sheets: только заголовки листов без данных.",
+    )
+    p.add_argument(
+        "--env",
+        action="store_true",
+        help="Добавить содержимое .env и переменные окружения (значения секретов редактируются).",
+    )
+    p.add_argument(
+        "--no-redact", action="store_true", help="Не редактировать секреты (ОПАСНО)."
+    )
+    p.add_argument(
+        "--git", action="store_true", help="Добавить сводку git (ветка, HEAD, статус)."
+    )
+    p.add_argument("--pip", action="store_true", help="Добавить pip freeze.")
     return p.parse_args()
+
 
 # ---------- Утилиты форматирования ----------
 
+
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 
 def hr(title: str = "", char: str = "─", width: int = 88) -> str:
     if title:
@@ -76,12 +124,14 @@ def hr(title: str = "", char: str = "─", width: int = 88) -> str:
     core = char * width
     if title:
         mid = width // 2 - len(title) // 2
-        core = core[:max(0, mid)] + title + core[max(0, mid + len(title)):]
+        core = core[: max(0, mid)] + title + core[max(0, mid + len(title)) :]
     return core
+
 
 def indent(text: str, n: int = 2) -> str:
     pad = " " * n
     return "\n".join(pad + line if line.strip() else line for line in text.splitlines())
+
 
 def safe_rel(path: Path, root: Path) -> str:
     try:
@@ -89,9 +139,13 @@ def safe_rel(path: Path, root: Path) -> str:
     except Exception:
         return str(path)
 
+
 # ---------- Редакция секретов ----------
 
-SECRET_KEYS = re.compile(r"(PASSWORD|PASS|SECRET|TOKEN|KEY|PRIVATE|CREDENTIAL|API|BEARER|AUTH)", re.I)
+SECRET_KEYS = re.compile(
+    r"(PASSWORD|PASS|SECRET|TOKEN|KEY|PRIVATE|CREDENTIAL|API|BEARER|AUTH)", re.I
+)
+
 
 def redact(value: str) -> str:
     if not value:
@@ -99,6 +153,7 @@ def redact(value: str) -> str:
     if len(value) <= 8:
         return "****"
     return value[:3] + "…" + value[-3:]
+
 
 def redact_env_line(line: str) -> str:
     if "=" not in line:
@@ -108,7 +163,9 @@ def redact_env_line(line: str) -> str:
         return f"{k}=<redacted>"
     return line
 
+
 # ---------- Чтение файлов безопасно ----------
+
 
 def read_text_safely(path: Path, max_bytes: int | None = None) -> str:
     encodings = ["utf-8", "cp1251", "latin-1"]
@@ -122,6 +179,7 @@ def read_text_safely(path: Path, max_bytes: int | None = None) -> str:
             continue
     return f"<<не удалось прочитать {path.name}>>"
 
+
 def sha256_of_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -129,7 +187,9 @@ def sha256_of_file(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()[:16]
 
+
 # ---------- Поиск логов ----------
+
 
 def find_log_files(project_root: Path) -> list[Path]:
     candidates: list[Path] = []
@@ -147,7 +207,9 @@ def find_log_files(project_root: Path) -> list[Path]:
             out.extend(p for p in base.rglob("*.log") if p.is_file())
     return sorted(set(out))
 
+
 # ---------- Поиск SQLite ----------
+
 
 def autodetect_sqlite(project_root: Path) -> Optional[Path]:
     # эвристика: выбрать самый свежий *.db известного вида
@@ -158,6 +220,7 @@ def autodetect_sqlite(project_root: Path) -> Optional[Path]:
     candidates = list(set(candidates))
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return candidates[0]
+
 
 def summarize_sqlite(db_path: Path) -> str:
     buf = io.StringIO()
@@ -172,7 +235,9 @@ def summarize_sqlite(db_path: Path) -> str:
         for r in dblist:
             buf.write(f"  name={r['name']} file={r['file']}\n")
         # объекты
-        cur.execute("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name;")
+        cur.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name;"
+        )
         rows = cur.fetchall()
         buf.write("Schema objects (sqlite_master):\n")
         for r in rows:
@@ -182,7 +247,11 @@ def summarize_sqlite(db_path: Path) -> str:
             if short:
                 buf.write(indent(short, 4) + "\n")
         # количество строк по таблицам (осторожно)
-        tables = [r["name"] for r in rows if r["type"] == "table" and not r["name"].startswith("sqlite_")]
+        tables = [
+            r["name"]
+            for r in rows
+            if r["type"] == "table" and not r["name"].startswith("sqlite_")
+        ]
         buf.write("Row counts (approx):\n")
         for t in tables:
             try:
@@ -193,17 +262,21 @@ def summarize_sqlite(db_path: Path) -> str:
                 buf.write(f"  {t}: error: {e}\n")
     return buf.getvalue()
 
+
 # ---------- Google Sheets ----------
+
 
 @dataclass
 class SheetsConfig:
     cred: Optional[Path]
     sheet: Optional[str]
 
+
 def import_config(project_root: Path) -> dict:
     sys.path.insert(0, str(project_root))
     try:
         import config  # type: ignore
+
         out = {}
         for name in dir(config):
             if name.isupper():
@@ -215,6 +288,7 @@ def import_config(project_root: Path) -> dict:
         return out
     except Exception:
         return {}
+
 
 def _json_default(o):
     """Безопасная сериализация нестандартных объектов в JSON."""
@@ -235,6 +309,7 @@ def _json_default(o):
     except Exception:
         return f"<unserializable:{type(o).__name__}>"
 
+
 def derive_sheets_conf(args: argparse.Namespace, cfg: dict) -> SheetsConfig:
     cred = args.cred
     sheet = args.sheet
@@ -247,12 +322,18 @@ def derive_sheets_conf(args: argparse.Namespace, cfg: dict) -> SheetsConfig:
         except Exception:
             pass
     if sheet is None:
-        sheet = cfg.get("GOOGLE_SHEET_NAME") if isinstance(cfg.get("GOOGLE_SHEET_NAME"), str) else None
+        sheet = (
+            cfg.get("GOOGLE_SHEET_NAME")
+            if isinstance(cfg.get("GOOGLE_SHEET_NAME"), str)
+            else None
+        )
     return SheetsConfig(cred=cred, sheet=sheet)
+
 
 def summarize_sheets(headers_only: bool, cred_path: Path, sheet_name_or_id: str) -> str:
     import gspread
     from google.oauth2.service_account import Credentials
+
     buf = io.StringIO()
     buf.write(f"Credentials: {cred_path}\n")
     buf.write(f"Spreadsheet: {sheet_name_or_id}\n")
@@ -282,11 +363,14 @@ def summarize_sheets(headers_only: bool, cred_path: Path, sheet_name_or_id: str)
                 buf.write(f"Row{i}: " + json.dumps(row, ensure_ascii=False) + "\n")
     return buf.getvalue()
 
+
 # ---------- Код и дерево проекта ----------
+
 
 def should_skip_dir(path: Path, exclude: set[str]) -> bool:
     name = path.name
     return name in exclude
+
 
 def walk_files(root: Path, exclude_dirs: set[str]) -> Iterator[Path]:
     for base, dirs, files in os.walk(root):
@@ -296,8 +380,10 @@ def walk_files(root: Path, exclude_dirs: set[str]) -> Iterator[Path]:
         for f in files:
             yield base_p / f
 
+
 def is_text_candidate(path: Path, allowed_exts: set[str]) -> bool:
     return path.suffix.lower().lstrip(".") in allowed_exts
+
 
 def summarize_tree(root: Path, exclude_dirs: set[str]) -> str:
     # компактное древо вида: size, mtime, sha256(16)
@@ -308,13 +394,22 @@ def summarize_tree(root: Path, exclude_dirs: set[str]) -> str:
             size_kb = f"{st.st_size/1024:.1f}KB"
             mtime = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
             digest = sha256_of_file(p)
-            items.append(f"{safe_rel(p, root)} | {size_kb} | mtime={mtime} | sha256={digest}")
+            items.append(
+                f"{safe_rel(p, root)} | {size_kb} | mtime={mtime} | sha256={digest}"
+            )
         except Exception as e:
             items.append(f"{safe_rel(p, root)} | <error: {e}>")
     return "\n".join(items)
 
-def dump_sources(root: Path, allowed_exts: set[str], exclude_dirs: set[str], full: bool,
-                 per_file_limit_kb: int, total_budget_mb: int) -> str:
+
+def dump_sources(
+    root: Path,
+    allowed_exts: set[str],
+    exclude_dirs: set[str],
+    full: bool,
+    per_file_limit_kb: int,
+    total_budget_mb: int,
+) -> str:
     buf = io.StringIO()
     total_budget = total_budget_mb * 1024 * 1024
     written = 0
@@ -346,28 +441,38 @@ def dump_sources(root: Path, allowed_exts: set[str], exclude_dirs: set[str], ful
         written += data_len
     return buf.getvalue()
 
+
 # ---------- Git и pip ----------
+
 
 def git_summary(root: Path) -> str:
     def run(cmd: list[str]) -> str:
         try:
-            out = subprocess.check_output(cmd, cwd=root, stderr=subprocess.STDOUT, text=True, timeout=10)
+            out = subprocess.check_output(
+                cmd, cwd=root, stderr=subprocess.STDOUT, text=True, timeout=10
+            )
             return out.strip()
         except Exception as e:
             return f"<<git error: {e}>>"
+
     head = run(["git", "rev-parse", "--short", "HEAD"])
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     status = run(["git", "status", "-s", "-b"])
     return f"HEAD: {head}\nBRANCH: {branch}\nSTATUS:\n{status}\n"
 
+
 def pip_freeze() -> str:
     try:
-        out = subprocess.check_output([sys.executable, "-m", "pip", "freeze"], text=True, timeout=20)
+        out = subprocess.check_output(
+            [sys.executable, "-m", "pip", "freeze"], text=True, timeout=20
+        )
         return out.strip()
     except Exception as e:
         return f"<<pip freeze error: {e}>>"
 
+
 # ---------- .env и окружение ----------
+
 
 def read_env_files(root: Path) -> list[Path]:
     out: list[Path] = []
@@ -380,6 +485,7 @@ def read_env_files(root: Path) -> list[Path]:
         if p.is_file():
             out.append(p)
     return sorted(set(out))
+
 
 def dump_env(root: Path, redact_secrets: bool) -> str:
     buf = io.StringIO()
@@ -401,7 +507,9 @@ def dump_env(root: Path, redact_secrets: bool) -> str:
         buf.write(f"{k}={v}\n")
     return buf.getvalue()
 
+
 # ---------- Основная логика ----------
+
 
 def main() -> int:
     args = parse_args()
@@ -424,15 +532,23 @@ def main() -> int:
     # источники
     buf.write(hr("SOURCES") + "\n")
     full_flag = bool(args.full_code)
-    buf.write(f"Extensions: {sorted(allowed_exts)} | full_code={full_flag} | "
-              f"max_file_kb={args.max_file_kb} | total_budget_mb={args.max_total_mb}\n\n")
+    buf.write(
+        f"Extensions: {sorted(allowed_exts)} | full_code={full_flag} | "
+        f"max_file_kb={args.max_file_kb} | total_budget_mb={args.max_total_mb}\n\n"
+    )
     # дерево файлов
     buf.write(hr("FILE TREE (size, mtime, sha256)") + "\n")
     buf.write(summarize_tree(project_root, exclude_dirs) + "\n\n")
     # код
     buf.write(hr("SOURCE CODE") + "\n")
-    code = dump_sources(project_root, allowed_exts, exclude_dirs, args.full_code,
-                        args.max_file_kb, args.max_total_mb)
+    code = dump_sources(
+        project_root,
+        allowed_exts,
+        exclude_dirs,
+        args.full_code,
+        args.max_file_kb,
+        args.max_total_mb,
+    )
     buf.write(code + "\n\n")
     # логи
     logs = find_log_files(project_root)
@@ -442,7 +558,7 @@ def main() -> int:
         buf.write(f"\n{hr(safe_rel(log, project_root))}\n")
         try:
             lines = read_text_safely(log).splitlines()
-            tail = lines[-args.logs_lines:] if len(lines) > args.logs_lines else lines
+            tail = lines[-args.logs_lines :] if len(lines) > args.logs_lines else lines
             buf.write("\n".join(tail) + "\n")
         except Exception as e:
             buf.write(f"<<error reading log: {e}>>\n")
@@ -460,7 +576,9 @@ def main() -> int:
         conf = derive_sheets_conf(args, cfg)
         if conf.cred and conf.sheet and conf.cred.exists():
             try:
-                buf.write(summarize_sheets(args.headers_only, conf.cred, conf.sheet) + "\n")
+                buf.write(
+                    summarize_sheets(args.headers_only, conf.cred, conf.sheet) + "\n"
+                )
             except Exception as e:
                 buf.write(f"<<error accessing Google Sheets: {e}>>\n")
         else:
@@ -482,6 +600,7 @@ def main() -> int:
     args.output.write_text(buf.getvalue(), encoding="utf-8")
     print(f"Report written to: {args.output}")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

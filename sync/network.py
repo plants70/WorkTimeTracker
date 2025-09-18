@@ -5,6 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def is_internet_available(timeout: int = 3) -> bool:
     """Проверить доступность интернета."""
     try:
