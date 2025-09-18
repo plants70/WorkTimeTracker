@@ -1,10 +1,11 @@
-import logging
 import json
-from pathlib import Path
-from datetime import datetime, timedelta
-from threading import Lock
-from typing import List, Dict
+import logging
 import uuid
+from datetime import datetime, timedelta
+from pathlib import Path
+from threading import Lock
+from typing import Dict, List
+
 from config import MAX_COMMENT_LENGTH
 
 logger = logging.getLogger(__name__)

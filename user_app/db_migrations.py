@@ -1,5 +1,6 @@
 # user_app/db_migrations.py
 from __future__ import annotations
+
 import sqlite3
 from typing import Iterable
 

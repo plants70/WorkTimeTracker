@@ -1,7 +1,9 @@
 # admin_app/notifications_panel.py
 from __future__ import annotations
-from PyQt5 import QtWidgets
+
 import logging
+
+from PyQt5 import QtWidgets
 
 from notifications.rules_manager import HEADER, load_rules, save_rules
 

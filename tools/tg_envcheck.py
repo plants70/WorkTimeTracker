@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 import os
-from config import (
-    TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN,
-    TELEGRAM_ADMIN_CHAT_ID as CFG_TELEGRAM_ADMIN_CHAT_ID,
-    TELEGRAM_BROADCAST_CHAT_ID as CFG_TELEGRAM_BROADCAST_CHAT_ID,
-)
+
+from config import TELEGRAM_ADMIN_CHAT_ID as CFG_TELEGRAM_ADMIN_CHAT_ID
+from config import TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BROADCAST_CHAT_ID as CFG_TELEGRAM_BROADCAST_CHAT_ID
 
 
 def _mask(s: str, keep=6) -> str:

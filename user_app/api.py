@@ -1,8 +1,10 @@
 # user_app/api.py
 from __future__ import annotations
-from sheets_api import SheetsAPI
+
 import datetime as dt
 import uuid
+
+from sheets_api import SheetsAPI, SheetsAPIError
 
 
 class UserNotFound(Exception):
@@ -54,4 +56,19 @@ class UserAPI:
     def log_actions(
         self, actions: list[dict], email: str, user_group: str | None = None
     ) -> bool:
-        return self.sheets.log_user_actions(actions, email=email, user_group=user_group)
+        try:
+            for action in actions:
+                self.sheets.log_user_actions(
+                    email=action.get("email", email),
+                    action=action.get("action_type", ""),
+                    status=action.get("status", ""),
+                    group=user_group,
+                    timestamp_utc=action.get("timestamp"),
+                    start_utc=action.get("status_start_time"),
+                    end_utc=action.get("status_end_time"),
+                    session_id=action.get("session_id"),
+                    group_at_start=user_group,
+                )
+            return True
+        except SheetsAPIError:
+            return False

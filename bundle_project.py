@@ -458,9 +458,9 @@ def introspect_gsheets(sample_limit: int = 3) -> str:
 
         # Заголовок и листы
         try:
-            from config import (
+            from config import (  # имя книги хранится в конфиге :contentReference[oaicite:3]{index=3}
                 GOOGLE_SHEET_NAME,
-            )  # имя книги хранится в конфиге :contentReference[oaicite:3]{index=3}
+            )
         except Exception:
             GOOGLE_SHEET_NAME = "(см. config)"
 

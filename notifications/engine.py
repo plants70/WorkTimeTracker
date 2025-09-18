@@ -1,13 +1,14 @@
 # notifications/engine.py
 from __future__ import annotations
+
+import datetime as dt
 import logging
 import sqlite3
 import threading
-import datetime as dt
 
-from notifications.rules_manager import load_rules, Rule
-from telegram_bot.notifier import TelegramNotifier
 from config import LOCAL_DB_PATH
+from notifications.rules_manager import Rule, load_rules
+from telegram_bot.notifier import TelegramNotifier
 
 log = logging.getLogger(__name__)
 
@@ -215,8 +216,8 @@ def poll_long_running_remote() -> None:
     # 2) Если локально не нашли — фолбэк к ActiveSessions
     if not status_name or not started_iso:
         try:
-            from sheets_api import SheetsAPI
             from config import GOOGLE_SHEET_NAME
+            from sheets_api import SheetsAPI
 
             api = SheetsAPI()
             ss = api.client.open(GOOGLE_SHEET_NAME)

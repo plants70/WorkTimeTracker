@@ -8,18 +8,19 @@ DEPRECATED: помогает сохранить совместимость, но
 """
 
 from __future__ import annotations
-from typing import List, Optional
+
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
+from typing import List, Optional
 
 # Добавляем корень проекта в sys.path, чтобы были доступны config и sheets_api при прямом запуске
 ROOT_PATH = str(Path(__file__).parent.parent.resolve())
 if ROOT_PATH not in sys.path:
     sys.path.insert(0, ROOT_PATH)
 
-from sheets_api import SheetsAPI, SheetsAPIError  # централизованный слой
 from config import GOOGLE_SHEET_NAME  # только для сообщений
+from sheets_api import SheetsAPI, SheetsAPIError  # централизованный слой
 
 logger = logging.getLogger(__name__)
 if not logger.hasHandlers():

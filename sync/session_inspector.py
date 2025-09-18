@@ -1,6 +1,6 @@
 # sync/session_inspector.py
-import logging
 import datetime as dt
+import logging
 
 from sheets_api import get_sheets_api
 

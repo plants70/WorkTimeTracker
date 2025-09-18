@@ -1,7 +1,8 @@
 # user_app/session.py
 from __future__ import annotations
-from typing import Optional
+
 import threading
+from typing import Optional
 
 # Простой потокобезопасный storage для текущих реквизитов сессии
 _lock = threading.RLock()

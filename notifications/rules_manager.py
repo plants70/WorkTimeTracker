@@ -1,11 +1,12 @@
 # notifications/rules_manager.py
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import List, Optional, Any
-import logging
 
-from sheets_api import SheetsAPI
+import logging
+from dataclasses import dataclass
+from typing import Any, List, Optional
+
 from config import GOOGLE_SHEET_NAME
+from sheets_api import SheetsAPI
 
 log = logging.getLogger(__name__)
 

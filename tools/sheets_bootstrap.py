@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import sys
 
-from sheets_api import SheetsAPI
 from config import GOOGLE_SHEET_NAME
+from sheets_api import SheetsAPI
 
 _USERS_HEADER = ["Email", "Name", "Group", "TelegramChatId"]
 _GROUPS_HEADER = ["Group", "TelegramTopicId"]

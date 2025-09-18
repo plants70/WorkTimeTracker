@@ -1,15 +1,11 @@
 # admin_app/repo.py
 from __future__ import annotations
 
-import logging
 import datetime as dt
+import logging
 
+from config import ACTIVE_SESSIONS_SHEET, GOOGLE_SHEET_NAME, USERS_SHEET
 from sheets_api import SheetsAPIError, get_sheets_api
-from config import (
-    GOOGLE_SHEET_NAME,
-    USERS_SHEET,
-    ACTIVE_SESSIONS_SHEET,
-)
 
 logger = logging.getLogger(__name__)
 
