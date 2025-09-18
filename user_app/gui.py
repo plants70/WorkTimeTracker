@@ -563,13 +563,16 @@ class EmployeeApp(QWidget):
         super().closeEvent(event)
 
 if __name__ == "__main__":
+    from logging_setup import setup_logging
+
+    setup_logging(app_name="wtt-user-gui", force_console=True)
     app = QApplication(sys.argv)
     window = EmployeeApp(
         email="test@example.com",
         name="Тестовый Сотрудник",
         role="специалист",
         group="Тестовая группа",
-        on_logout_callback=lambda reason: print(f"Logout reason: {reason}")
+        on_logout_callback=lambda reason: logger.info("Logout reason: %s", reason)
     )
     window.show()
     sys.exit(app.exec())

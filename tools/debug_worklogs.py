@@ -1,39 +1,44 @@
 import logging
-from sheets_api import get_sheets_api
+
 from config import DEFAULT_WORKLOG_GROUP, normalize_group_name
+from logging_setup import setup_logging
+from sheets_api import get_sheets_api
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-def print_headers(ws):
+logger = logging.getLogger(__name__)
+
+
+def print_headers(ws) -> None:
     try:
         headers = get_sheets_api()._request_with_retry(ws.row_values, 1)
-    except Exception as e:
-        print("   [ERR] не удалось прочитать шапку:", e)
+    except Exception as exc:
+        logger.error("Не удалось прочитать шапку", exc_info=exc)
         return
-    print("   Шапка:", headers)
+    logger.info("Шапка: %s", headers)
 
-def main():
+
+def main() -> None:
     api = get_sheets_api()
-    # Список вкладок
     try:
         titles = api._list_titles()
-        print("Доступные вкладки:")
-        for t in titles:
-            print(" -", t)
-    except Exception as e:
-        print("Не удалось получить список вкладок:", e)
+        logger.info("Доступные вкладки:")
+        for title in titles:
+            logger.info(" - %s", title)
+    except Exception as exc:
+        logger.error("Не удалось получить список вкладок", exc_info=exc)
         return
-    print()
 
-    # Проверим резолвинг по нескольким группам
-    for grp in [None, DEFAULT_WORKLOG_GROUP, "Стоматология", "Тест"]:
-        g = normalize_group_name(grp or "")
+    logger.info("")
+    for group in [None, DEFAULT_WORKLOG_GROUP, "Стоматология", "Тест"]:
+        normalized = normalize_group_name(group or "")
         try:
-            ws = api._resolve_worklog_ws(g)
-            print(f"[OK] group={grp!r} -> {ws.title}")
-            print_headers(ws)
-        except Exception as e:
-            print(f"[ERR] group={grp!r}: {e}")
+            worksheet = api._resolve_worklog_ws(normalized)
+            logger.info("group=%r -> %s", group, worksheet.title)
+            print_headers(worksheet)
+        except Exception as exc:
+            logger.error("group=%r: ошибка", group, exc_info=exc)
+
 
 if __name__ == "__main__":
+    setup_logging(app_name="wtt-debug-worklogs", force_console=True)
     main()

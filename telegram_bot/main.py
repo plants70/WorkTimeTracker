@@ -1,14 +1,19 @@
 # telegram_bot/main.py
 from __future__ import annotations
-import logging, re, time, requests, os
-from typing import Optional
-from pathlib import Path
-from config import GOOGLE_SHEET_NAME, USERS_SHEET, TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN
-from sheets_api import SheetsAPI
 
-# --- Единое логирование для телеграм бота ---
+import logging
+import os
+import re
+import time
+from typing import Optional
+
+import requests
+
+from config import GOOGLE_SHEET_NAME, LOG_DIR, USERS_SHEET
+from config import TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN
 from logging_setup import setup_logging
-from config import LOG_DIR
+from sheets_api import SheetsAPI
+from telemetry import record_network_call
 
 # Инициализация логирования
 log_path = setup_logging(app_name="wtt-telebot", log_dir=LOG_DIR)
@@ -30,7 +35,11 @@ def _base() -> str:
     return f"https://api.telegram.org/bot{token}"
 
 def _send(chat_id: int | str, text: str) -> None:
-    requests.post(_base()+"/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=20)
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    with record_network_call("telegram.send_message"):
+        response = requests.post(_base() + "/sendMessage", json=payload, timeout=20)
+    if response.status_code >= 400:
+        log.warning("sendMessage responded with status %s", response.status_code)
 
 def _num_to_col(n: int) -> str:
     res = ""
@@ -81,10 +90,13 @@ def main():
             params = {"timeout": 60}
             if offset is not None:
                 params["offset"] = offset
-            r = requests.get(base+"/getUpdates", params=params, timeout=70)
-            data = r.json()
+            with record_network_call("telegram.get_updates"):
+                response = requests.get(base + "/getUpdates", params=params, timeout=70)
+            data = response.json()
             if not data.get("ok"):
-                time.sleep(2); continue
+                log.warning("getUpdates returned ok=False: %s", data)
+                time.sleep(2)
+                continue
             for upd in data.get("result", []):
                 offset = upd["update_id"] + 1
                 msg = upd.get("message") or {}
@@ -103,8 +115,9 @@ def main():
                     _send(chat_id, "Это не похоже на e-mail. Пришлите адрес вида <b>user@company.com</b>.")
         except KeyboardInterrupt:
             break
-        except Exception as e:
-            log.warning("Loop error: %s", e); time.sleep(3)
+        except Exception as exc:
+            log.warning("Loop error", exc_info=exc)
+            time.sleep(3)
 
 if __name__ == "__main__":
     main()

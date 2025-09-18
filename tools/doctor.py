@@ -16,6 +16,9 @@ from sheets_api import get_sheets_api
 
 from notifications.rules_manager import RULES_SHEET
 
+
+logger = logging.getLogger(__name__)
+
 # Минимальные ожидания под вашу фактическую схему:
 EXPECTED = {
     "Users": ["Email", "Name", "Group"],  # базовые атрибуты пользователя
@@ -193,7 +196,7 @@ def run(out: Path) -> None:
         out_path.write_text(render_markdown(report), encoding="utf-8")
     else:
         out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"OK: written {out_path}")
+    logger.info("Отчёт записан: %s", out_path)
 
 
 def main():
@@ -217,7 +220,6 @@ def main():
     level = logging.DEBUG if args.debug else (getattr(logging, args.log_level, None) if args.log_level else None)
     force_console = True if (args.debug or args.console) else None
     setup_logging(app_name="wtt-doctor", log_dir=LOG_DIR, level=level, force_console=force_console)
-    logger = logging.getLogger(__name__)
     
     # --- Проверка NotificationRules: булево в MessageTemplate ---
     try:
@@ -236,9 +238,12 @@ def main():
                     if v in ("TRUE","FALSE"):
                         bad.append(r)
                 if bad:
-                    print(f"WARNING: {len(bad)} rule(s) have boolean in MessageTemplate; default text will be used.")
+                    logger.warning(
+                        "%d rule(s) have boolean in MessageTemplate; default text will be used.",
+                        len(bad),
+                    )
     except Exception as e:
-        print(f"Doctor: rules check skipped: {e}")
+        logger.warning("Rules check skipped", exc_info=e)
     
     run(Path(args.output))
 

@@ -1,11 +1,17 @@
 # tools/tg_send.py
 from __future__ import annotations
-import argparse, logging
+
+import argparse
+import logging
+
+from logging_setup import setup_logging
 from telegram_bot.notifier import TelegramNotifier
 
-logging.basicConfig(level=logging.INFO)
 
-def main():
+logger = logging.getLogger(__name__)
+
+
+def main() -> int:
     ap = argparse.ArgumentParser("Отправка уведомлений в Telegram")
     ap.add_argument("--type", choices=["service", "personal", "group"], required=True)
     ap.add_argument("--email", help="для personal: e-mail сотрудника")
@@ -23,7 +29,12 @@ def main():
         ok = n.send_personal(args.email, args.text, silent=args.silent)
     else:
         ok = n.send_group(args.text, group=None if args.all else args.group, for_all=args.all, silent=args.silent)
-    print("OK" if ok else "FAIL")
+    if ok:
+        logger.info("Telegram notification sent")
+        return 0
+    logger.error("Telegram notification failed")
+    return 1
 
 if __name__ == "__main__":
-    main()
+    setup_logging(app_name="wtt-tg-send", force_console=True)
+    raise SystemExit(main())

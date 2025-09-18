@@ -11,9 +11,15 @@
 import ast
 import argparse
 import inspect
+import logging
 import os
 from pathlib import Path
-from typing import Dict, Set, List, Tuple
+from typing import Dict, List, Set, Tuple
+
+from logging_setup import setup_logging
+
+
+logger = logging.getLogger(__name__)
 
 PROJECT_EXTS = {".py"}
 
@@ -76,20 +82,21 @@ def main():
         except Exception:
             pass
 
-    print("=== SheetsAPI surface (public) ===")
+    logger.info("=== SheetsAPI surface (public) ===")
     for m in sorted(api_methods):
-        print(" -", m)
-    print("\n=== Calls found in project ===")
+        logger.info(" - %s", m)
+    logger.info("=== Calls found in project ===")
     missing = []
     for m in sorted(found.keys()):
-        print(f"\n{m}:")
+        logger.info("%s:", m)
         for recv, kw in sorted(found[m]):
-            print(f"  recv={recv}, kwargs={kw}")
+            logger.info("  recv=%s, kwargs=%s", recv, kw)
         if m not in api_methods:
             missing.append(m)
-    print("\n=== Missing in SheetsAPI ===")
+    logger.info("=== Missing in SheetsAPI ===")
     for m in missing:
-        print(" *", m)
+        logger.info(" * %s", m)
 
 if __name__ == "__main__":
+    setup_logging(app_name="wtt-audit-api", force_console=True)
     main()

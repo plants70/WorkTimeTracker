@@ -397,7 +397,9 @@ class LoginWindow(QDialog):
 
 if __name__ == "__main__":
     from PyQt5.QtWidgets import QApplication
-    logging.basicConfig(level=logging.DEBUG)
+    from logging_setup import setup_logging
+
+    setup_logging(app_name="wtt-login-window", force_console=True)
     app = QApplication(sys.argv)
     window = LoginWindow()
     window.show()

@@ -889,7 +889,9 @@ def write_tx_external(db_path: Optional[str] = None):
 
 if __name__ == "__main__":
     import argparse
+    from logging_setup import setup_logging
 
+    setup_logging(app_name="wtt-db-local", force_console=True)
     ap = argparse.ArgumentParser(description="LocalDB helper")
     ap.add_argument("--path", type=str, default=str(LOCAL_DB_PATH))
     ap.add_argument("--add-log", type=str, default=None, help="Добавить app_log (level:msg)")
@@ -903,10 +905,10 @@ if __name__ == "__main__":
         except Exception:
             level, msg = "INFO", args.add_log
         rid = db.add_log(level, msg)
-        print(f"Inserted app_log id={rid}")
+        logger.info("Inserted app_log id=%s", rid)
 
     if args.cleanup_days is not None:
         cnt = db.cleanup_old_logs(days=args.cleanup_days)
-        print(f"Deleted {cnt} old app_log rows")
+        logger.info("Deleted %s old app_log rows", cnt)
 
     db.close()

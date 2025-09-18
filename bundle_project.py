@@ -22,13 +22,19 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import logging
 import mimetypes
 import os
 import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, List, Dict, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
+
+from logging_setup import setup_logging
+
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------------
 # 1) Настройки для дерева и бандла
@@ -402,6 +408,7 @@ def introspect_gsheets(sample_limit: int = 3) -> str:
 # -----------------------------------
 
 def main():
+    setup_logging(app_name="wtt-bundle-project", force_console=True)
     ap = argparse.ArgumentParser(description="Собрать отчёт по проекту (дерево, бандл, SQLite, Google Sheets).")
     ap.add_argument("-r", "--root", type=str, default=".", help="Корень проекта (default .)")
     ap.add_argument("-o", "--output", type=str, default="project_report.txt", help="Путь к выходному TXT.")
@@ -460,7 +467,10 @@ def main():
                     continue
             files.sort(key=lambda x: str(x).lower())
         except Exception as e:
-            print(f"[WARN] git-only режим не удался: {e}. Переход к файловому обходу.", file=sys.stderr)
+            logger.warning(
+                "git-only режим не удался. Переход к файловому обходу.",
+                exc_info=e,
+            )
             files = collect_files(root, include_exts, exclude_dirs, args.max_bytes)
     else:
         files = collect_files(root, include_exts, exclude_dirs, args.max_bytes)
@@ -510,7 +520,7 @@ def main():
         # Бандл исходников
         write_bundle(out, root, files)
 
-    print(f"✓ Готово: {out_path}")
+    logger.info("Готово: %s", out_path)
 
 if __name__ == "__main__":
     main()

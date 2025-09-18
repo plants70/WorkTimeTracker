@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import logging
 import io
 import json
 import os
@@ -20,6 +21,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
+
+
+logger = logging.getLogger(__name__)
 
 # ---------- Аргументы CLI ----------
 
@@ -404,6 +408,9 @@ def dump_env(root: Path, redact_secrets: bool) -> str:
 # ---------- Основная логика ----------
 
 def main() -> int:
+    from logging_setup import setup_logging
+
+    setup_logging(app_name="wtt-collect-diagnostics", force_console=True)
     args = parse_args()
     project_root = args.project_root.resolve()
     exclude_dirs = set(d.strip() for d in args.exclude_dirs.split(","))
@@ -480,7 +487,7 @@ def main() -> int:
     # запись
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(buf.getvalue(), encoding="utf-8")
-    print(f"Report written to: {args.output}")
+    logger.info("Report written to: %s", args.output)
     return 0
 
 if __name__ == "__main__":

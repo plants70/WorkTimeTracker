@@ -6,14 +6,7 @@ import shutil
 from pathlib import Path
 from PyInstaller.__main__ import run
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('build_user.log', mode='w', encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+from logging_setup import setup_logging
 logger = logging.getLogger(__name__)
 
 def main():
@@ -86,4 +79,5 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
+    setup_logging(app_name="build_user", log_dir=Path.cwd(), force_console=True)
     main()

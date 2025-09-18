@@ -22,8 +22,6 @@ from sheets_api import SheetsAPI, SheetsAPIError  # централизованн
 from config import GOOGLE_SHEET_NAME  # только для сообщений
 
 logger = logging.getLogger(__name__)
-if not logger.hasHandlers():
-    logging.basicConfig(level=logging.INFO)
 
 # Возможные названия листа с графиком (приоритет по порядку)
 CANDIDATE_SCHEDULE_TITLES = ["ShiftCalendar", "Schedule", "График"]

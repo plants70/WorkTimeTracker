@@ -1,10 +1,12 @@
 # telegram_bot/notifier.py
 from __future__ import annotations
-import logging, time
-from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple, List
-import requests
+import logging
 import os
+import time
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
+
+import requests
 
 # Импорты из config.py с обработкой исключений на случай отсутствия модуля
 try:
@@ -28,6 +30,7 @@ except ImportError:
     CFG_TELEGRAM_SILENT = False
 
 from sheets_api import SheetsAPI
+from telemetry import record_network_call
 
 log = logging.getLogger(__name__)
 NOTIFICATIONS_LOG_SHEET = "NotificationsLog"
@@ -168,17 +171,21 @@ class TelegramNotifier:
             "disable_notification": self.default_silent if silent is None else bool(silent),
         }
         try:
-            # Модернизация: используем сессию с таймаутом
-            r = self._session.post(f"{self.api_url}/sendMessage", json=payload, timeout=self._timeout)
-            data = r.json()
+            with record_network_call("telegram.send_message"):
+                response = self._session.post(
+                    f"{self.api_url}/sendMessage",
+                    json=payload,
+                    timeout=self._timeout,
+                )
+            data = response.json()
             if not data.get("ok", False):
-                err = data.get("description") or r.text
+                err = data.get("description") or response.text
                 log.error("Telegram sendMessage error: %s", err)
                 return False, err
             return True, None
-        except Exception as e:
-            log.exception("Telegram sendMessage exception: %s", e)
-            return False, str(e)
+        except Exception as exc:
+            log.exception("Telegram sendMessage exception")
+            return False, str(exc)
 
     def _resolve_chat_id(self, email: str) -> Optional[str]:
         email = (email or "").strip().lower()

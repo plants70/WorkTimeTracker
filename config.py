@@ -1,4 +1,5 @@
 # config.py
+import logging
 import os
 import sys
 import platform
@@ -9,11 +10,15 @@ import atexit
 
 # ==================== Загрузка переменных окружения из .env ====================
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # ==================== Импорт для работы с зашифрованным credentials ====================
 import pyzipper
 import tempfile
+
+
+logger = logging.getLogger(__name__)
 
 # ==================== Базовые настройки ====================
 if getattr(sys, 'frozen', False):
@@ -366,10 +371,10 @@ def normalize_group_name(name: str) -> str:
 # ==================== Инициализация конфигурации ====================
 try:
     validate_config()
-    print("✓ Конфигурация успешно проверена")
-    print(f"✓ Стратегия повторных попыток: {SYNC_RETRY_STRATEGY}")
+    logger.info("Конфигурация успешно проверена")
+    logger.info("Стратегия повторных попыток: %s", SYNC_RETRY_STRATEGY)
 except Exception as e:
-    print(f"✗ Ошибка конфигурации: {e}")
+    logger.error("Ошибка конфигурации", exc_info=e)
     raise
 
 # ==================== Утилиты для PyInstaller ====================
@@ -383,50 +388,52 @@ def get_resource_path(relative_path: str) -> str:
 
 # ==================== Константы для тестирования ====================
 if __name__ == "__main__":
-    print(f"BASE_DIR: {BASE_DIR}")
-    print(f"LOG_DIR: {LOG_DIR}")
-    print(f"CREDENTIALS_ZIP: {CREDENTIALS_ZIP}")
-    print(f"SYNC_RETRY_STRATEGY: {SYNC_RETRY_STRATEGY}")
-    print(f"Максимальная задержка: {max(SYNC_RETRY_STRATEGY)} секунд ({max(SYNC_RETRY_STRATEGY)/60} минут)")
-    
-    # Тестируем ленивую загрузку credentials
+    from logging_setup import setup_logging
+
+    setup_logging(app_name="wtt-config", force_console=True)
+    logger.info("BASE_DIR: %s", BASE_DIR)
+    logger.info("LOG_DIR: %s", LOG_DIR)
+    logger.info("CREDENTIALS_ZIP: %s", CREDENTIALS_ZIP)
+    logger.info("SYNC_RETRY_STRATEGY: %s", SYNC_RETRY_STRATEGY)
+    logger.info(
+        "Максимальная задержка: %s секунд (%.2f минут)",
+        max(SYNC_RETRY_STRATEGY),
+        max(SYNC_RETRY_STRATEGY) / 60,
+    )
+
     try:
         with credentials_path() as creds:
-            print(f"✓ Credentials file: {creds}")
-            print(f"✓ File exists: {creds.exists()}")
+            logger.info("Credentials file: %s", creds)
+            logger.info("Credentials file exists: %s", creds.exists())
     except Exception as e:
-        print(f"✗ Error accessing credentials: {e}")
-    
-    # Тестируем новые настройки правил
-    print(f"PERSONAL_RULES_ENABLED: {PERSONAL_RULES_ENABLED}")
-    print(f"PERSONAL_WINDOW_MIN: {PERSONAL_WINDOW_MIN}")
-    print(f"PERSONAL_STATUS_LIMIT_PER_WINDOW: {PERSONAL_STATUS_LIMIT_PER_WINDOW}")
-    print(f"SERVICE_ALERTS_ENABLED: {SERVICE_ALERTS_ENABLED}")
-    print(f"SERVICE_ALERT_MIN_SECONDS: {SERVICE_ALERT_MIN_SECONDS}")
-    
-    # Тестируем новые константы для логина
-    print(f"ALLOW_SELF_SIGNUP: {ALLOW_SELF_SIGNUP}")
-    print(f"DEFAULT_USER_ROLE: {DEFAULT_USER_ROLE}")
-    print(f"DEFAULT_SHIFT_HOURS: {DEFAULT_SHIFT_HOURS}")
-    
-    # Тестируем новую карту листов WorkLog
-    print(f"WORKLOG_SHEETS_MAP: {WORKLOG_SHEETS_MAP}")
-    print(f"DEFAULT_WORKLOG_SHEET: {DEFAULT_WORKLOG_SHEET}")
-    print(f"WORKLOG_SHEET (обратная совместимость): {WORKLOG_SHEET}")
-    
-    # Тестируем новые параметры групповых вкладок
-    print(f"WORKLOG_SHEET_PREFIX: {WORKLOG_SHEET_PREFIX}")
-    print(f"WORKLOG_RESOLUTION: {WORKLOG_RESOLUTION}")
-    print(f"AUTOCREATE_WORKLOG_SHEET: {AUTOCREATE_WORKLOG_SHEET}")
-    print(f"DEFAULT_WORKLOG_GROUP: {DEFAULT_WORKLOG_GROUP}")
-    
-    # Тестируем новую групповую схему WorkLog
-    print(f"WORKLOG_GROUP_PREFIX: {WORKLOG_GROUP_PREFIX}")
-    print(f"DEFAULT_WORKLOG_GROUP: {DEFAULT_WORKLOG_GROUP}")
-    print(f"WORKLOG_HEADERS: {WORKLOG_HEADERS}")
-    
-    # Тестируем функцию нормализации
+        logger.error("Error accessing credentials", exc_info=e)
+
+    logger.info("PERSONAL_RULES_ENABLED: %s", PERSONAL_RULES_ENABLED)
+    logger.info("PERSONAL_WINDOW_MIN: %s", PERSONAL_WINDOW_MIN)
+    logger.info(
+        "PERSONAL_STATUS_LIMIT_PER_WINDOW: %s",
+        PERSONAL_STATUS_LIMIT_PER_WINDOW,
+    )
+    logger.info("SERVICE_ALERTS_ENABLED: %s", SERVICE_ALERTS_ENABLED)
+    logger.info("SERVICE_ALERT_MIN_SECONDS: %s", SERVICE_ALERT_MIN_SECONDS)
+
+    logger.info("ALLOW_SELF_SIGNUP: %s", ALLOW_SELF_SIGNUP)
+    logger.info("DEFAULT_USER_ROLE: %s", DEFAULT_USER_ROLE)
+    logger.info("DEFAULT_SHIFT_HOURS: %s", DEFAULT_SHIFT_HOURS)
+
+    logger.info("WORKLOG_SHEETS_MAP: %s", WORKLOG_SHEETS_MAP)
+    logger.info("DEFAULT_WORKLOG_SHEET: %s", DEFAULT_WORKLOG_SHEET)
+    logger.info("WORKLOG_SHEET (обратная совместимость): %s", WORKLOG_SHEET)
+
+    logger.info("WORKLOG_SHEET_PREFIX: %s", WORKLOG_SHEET_PREFIX)
+    logger.info("WORKLOG_RESOLUTION: %s", WORKLOG_RESOLUTION)
+    logger.info("AUTOCREATE_WORKLOG_SHEET: %s", AUTOCREATE_WORKLOG_SHEET)
+    logger.info("DEFAULT_WORKLOG_GROUP: %s", DEFAULT_WORKLOG_GROUP)
+
+    logger.info("WORKLOG_GROUP_PREFIX: %s", WORKLOG_GROUP_PREFIX)
+    logger.info("WORKLOG_HEADERS: %s", WORKLOG_HEADERS)
+
     test_names = ["  Входящие  ", "Почта", "  ", None]
     for name in test_names:
         normalized = normalize_group_name(name)
-        print(f"normalize_group_name('{name}') = '{normalized}'")
+        logger.info("normalize_group_name('%s') -> '%s'", name, normalized)

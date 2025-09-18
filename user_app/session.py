@@ -1,7 +1,12 @@
 # user_app/session.py
 from __future__ import annotations
-from typing import Optional
 import threading
+from typing import Optional
+
+from logging_setup import (
+    get_session_id as _get_log_session_id,
+    set_session_id as _set_log_session_id,
+)
 
 # Простой потокобезопасный storage для текущих реквизитов сессии
 _lock = threading.RLock()
@@ -20,8 +25,11 @@ def get_user_email() -> Optional[str]:
 def set_session_id(session_id: str) -> None:
     global _current_session_id
     with _lock:
-        _current_session_id = (session_id or "").strip()
+        normalized = (session_id or "").strip()
+        _current_session_id = normalized
+        _set_log_session_id(normalized)
 
 def get_session_id() -> Optional[str]:
     with _lock:
-        return _current_session_id
+        session_id = _current_session_id or _get_log_session_id()
+        return session_id if session_id and session_id != "-" else None

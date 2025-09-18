@@ -1,13 +1,18 @@
 # logging_setup.py
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import os
 import re
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
+from uuid import uuid4
+
+from datetime import datetime, timezone
 
 # Внутренние флаги, чтобы не плодить хендлеры
 _LOGGING_INITIALIZED = False
@@ -27,6 +32,104 @@ class PIIFilter(logging.Filter):
         if isinstance(record.msg, str):
             record.msg = _mask_pii(record.msg)
         return True
+
+
+# --------------------------- correlation context -----------------------------
+_request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "wtt_request_id", default="-"
+)
+_session_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "wtt_session_id", default="-"
+)
+
+
+def _clean_value(value: Optional[str]) -> str:
+    if value is None:
+        return "-"
+    value = str(value).strip()
+    return value or "-"
+
+
+def set_request_id(request_id: Optional[str]) -> None:
+    """Persist request correlation identifier in the current context."""
+
+    _request_id_var.set(_clean_value(request_id))
+
+
+def get_request_id() -> str:
+    """Return request identifier stored in the current context."""
+
+    return _clean_value(_request_id_var.get())
+
+
+def set_session_id(session_id: Optional[str]) -> None:
+    """Persist session identifier in the current context."""
+
+    _session_id_var.set(_clean_value(session_id))
+
+
+def get_session_id() -> str:
+    """Return session identifier stored in the current context."""
+
+    return _clean_value(_session_id_var.get())
+
+
+def new_request_id() -> str:
+    """Generate a new opaque correlation identifier."""
+
+    return uuid4().hex
+
+
+@contextlib.contextmanager
+def correlation_context(
+    *, request_id: Optional[str] = None, session_id: Optional[str] = None
+) -> Iterator[None]:
+    """
+    Context manager to temporarily override correlation identifiers.
+
+    Examples
+    --------
+    >>> with correlation_context(request_id="abc", session_id="sid"):
+    ...     logger.info("Will carry correlation fields")
+    """
+
+    tokens: list[tuple[contextvars.ContextVar[str], contextvars.Token[str]]] = []
+    try:
+        if request_id is not None:
+            tokens.append((_request_id_var, _request_id_var.set(_clean_value(request_id))))
+        if session_id is not None:
+            tokens.append((_session_id_var, _session_id_var.set(_clean_value(session_id))))
+        yield
+    finally:
+        for var, token in reversed(tokens):
+            var.reset(token)
+
+
+class CorrelationFilter(logging.Filter):
+    """Ensure correlation identifiers are always present on log records."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - trivial
+        if not hasattr(record, "request_id"):
+            record.request_id = get_request_id()
+        else:
+            record.request_id = _clean_value(record.request_id)
+        if not hasattr(record, "session_id"):
+            record.session_id = get_session_id()
+        else:
+            record.session_id = _clean_value(record.session_id)
+        return True
+
+
+class ISOFormatter(logging.Formatter):
+    """Formatter producing ISO-8601 timestamps."""
+
+    def formatTime(
+        self, record: logging.LogRecord, datefmt: Optional[str] = None
+    ) -> str:
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.isoformat(timespec="milliseconds")
 
 
 # --------------------------- helpers / internals ------------------------------
@@ -121,8 +224,8 @@ def _setup_logging_impl(
 
         _LOGGING_INITIALIZED = True
 
-    fmt = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+    fmt = ISOFormatter(
+        "%(asctime)s %(levelname)s %(name)s request_id=%(request_id)s session_id=%(session_id)s - %(message)s"
     )
 
     # Файловый хендлер с ротацией
@@ -132,6 +235,7 @@ def _setup_logging_impl(
     fh.setLevel(level)
     fh.setFormatter(fmt)
     fh.addFilter(PIIFilter())
+    fh.addFilter(CorrelationFilter())
 
     _configure_root_logger(level, fh)
 
@@ -141,6 +245,7 @@ def _setup_logging_impl(
         ch.setLevel(level)
         ch.setFormatter(fmt)
         ch.addFilter(PIIFilter())
+        ch.addFilter(CorrelationFilter())
         logging.getLogger().addHandler(ch)
 
     logging.getLogger(__name__).info(
@@ -212,4 +317,14 @@ def setup_logging_compat(*args, **kwargs) -> Path:
     return setup_logging(app_name=str(name), log_dir=log_dir, level=lvl)
 
 
-__all__ = ["setup_logging", "setup_logging_compat", "init_app_log_path"]
+__all__ = [
+    "setup_logging",
+    "setup_logging_compat",
+    "init_app_log_path",
+    "set_request_id",
+    "get_request_id",
+    "set_session_id",
+    "get_session_id",
+    "new_request_id",
+    "correlation_context",
+]

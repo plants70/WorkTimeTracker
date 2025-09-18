@@ -16,6 +16,9 @@ import threading
 from zoneinfo import ZoneInfo  # stdlib (Python 3.9+)
 import re
 from difflib import get_close_matches
+from types import MethodType
+
+from telemetry import record_network_call
 
 logger = logging.getLogger("sheets_api")  # никаких handlers здесь — конфиг только в приложении
 
@@ -119,6 +122,20 @@ class SheetsAPI:
                 details=str(e)
             )
 
+    def _instrument_session(
+        self, session: AuthorizedSession, prefix: str
+    ) -> AuthorizedSession:
+        original_request = session.request
+
+        def wrapped_request(_self_session: AuthorizedSession, method: str, url: str, *args, **kwargs):
+            endpoint = url.split("?", 1)[0]
+            metric_name = f"{prefix}.{method.lower()}:{endpoint}"
+            with record_network_call(metric_name):
+                return original_request(method, url, *args, **kwargs)
+
+        session.request = MethodType(wrapped_request, session)
+        return session
+
     # ---------- low-level client/bootstrap ----------
 
     def _init_client(self, max_retries: int = 3) -> None:
@@ -138,13 +155,13 @@ class SheetsAPI:
                 ]
                 credentials = Credentials.from_service_account_file(str(self.credentials_path), scopes=scopes)
                 self.client = gspread.client.Client(auth=credentials)
-                # gspread >=5
-                self.client.session = AuthorizedSession(credentials)
+                client_session = AuthorizedSession(credentials)
+                self.client.session = self._instrument_session(client_session, "gspread")
                 # На некоторых версиях http_client может отсутствовать — оставляем, как было у тебя
                 if hasattr(self.client, "http_client") and hasattr(self.client.http_client, "timeout"):
                     self.client.http_client.timeout = 30
 
-                self._session = AuthorizedSession(credentials)
+                self._session = self._instrument_session(AuthorizedSession(credentials), "google")
                 # У объекта AuthorizedSession нет атрибута timeout во всех версиях,
                 # но если есть — выставим.
                 try:
@@ -181,7 +198,9 @@ class SheetsAPI:
             logger.error(f"API connection test failed: {e}")
             try:
                 import urllib.request
-                urllib.request.urlopen('https://www.google.com', timeout=5)
+
+                with record_network_call("network.google_ping"):
+                    urllib.request.urlopen('https://www.google.com', timeout=5)
                 logger.debug("Internet connection is available")
             except Exception:
                 logger.error("No internet connection detected")

@@ -22,7 +22,7 @@ class Notifier:
             except ImportError:
                 logger.debug("Plyer не установлен, используем Qt-уведомления")
             except Exception as e:
-                logger.warning(f"Ошибка системного уведомления: {e}")
+                logger.warning("Ошибка системного уведомления", exc_info=e)
 
             # Fallback на Qt-сообщения
             msg = QMessageBox(parent)
@@ -34,9 +34,8 @@ class Notifier:
             msg.exec_()
 
         except Exception as e:
-            logger.error(f"Ошибка показа уведомления: {e}")
-            # Последний резервный вариант - вывод в консоль
-            print(f"Уведомление: {title} - {message}")
+            logger.error("Ошибка показа уведомления", exc_info=e)
+            logger.info("Уведомление (fallback): %s - %s", title, message)
 
     @staticmethod
     def show_warning(title: str, message: str, parent=None):
@@ -49,8 +48,8 @@ class Notifier:
             msg.setIcon(QMessageBox.Warning)
             msg.exec_()
         except Exception as e:
-            logger.error(f"Ошибка показа предупреждения: {e}")
-            print(f"Предупреждение: {title} - {message}")
+            logger.error("Ошибка показа предупреждения", exc_info=e)
+            logger.warning("Предупреждение (fallback): %s - %s", title, message)
 
     @staticmethod
     def show_error(title: str, message: str, parent=None):
@@ -63,5 +62,5 @@ class Notifier:
             msg.setIcon(QMessageBox.Critical)
             msg.exec_()
         except Exception as e:
-            logger.error(f"Ошибка показа ошибки: {e}")
-            print(f"Ошибка: {title} - {message}")
+            logger.error("Ошибка показа ошибки", exc_info=e)
+            logger.error("Ошибка (fallback): %s - %s", title, message)

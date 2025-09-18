@@ -9,17 +9,27 @@ from typing import Dict, List, Optional
 import socket
 from time import monotonic
 
+from logging_setup import setup_logging
+
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+logger = logging.getLogger(__name__)
 
 try:
     from PyQt5.QtCore import QObject, pyqtSignal
 except ImportError:
-    logging.warning("PyQt5 не найден. Сигналы GUI не будут работать. Запуск в режиме CLI.")
-    class QObject: pass
-    class pyqtSignal:
-        def __init__(self): pass
-        def emit(self, *args, **kwargs): pass
+    logger.warning("PyQt5 не найден. Сигналы GUI не будут работать. Запуск в режиме CLI.")
+
+    class QObject:  # type: ignore
+        pass
+
+    class pyqtSignal:  # type: ignore
+        def __init__(self):
+            pass
+
+        def emit(self, *args, **kwargs):
+            pass
 
 try:
     from config import (
@@ -37,7 +47,7 @@ try:
     from sync.network import is_internet_available
     from sync.session_inspector import SessionInspector
 except ImportError as e:
-    logging.error(f"Ошибка импорта модулей: {e}")
+    logger.error("Ошибка импорта модулей: %s", e)
     raise
 
 # Пулинг персональных правила перенесён в notifications.engine; безопасный импорт с фолбэком
@@ -48,8 +58,6 @@ except Exception:
         return
 
 # Персональные правила теперь обрабатываются через движок уведомлений, прямой импорт не нужен.
-
-logger = logging.getLogger(__name__)
 
 PING_PORT = 43333
 PING_TIMEOUT = 3600  # 1 час
@@ -484,15 +492,8 @@ class SyncManager(QObject):
             return self._stats.copy()
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(PROJECT_ROOT / "logs" / "sync_service.log", encoding='utf-8')
-        ]
-    )
-    
+    setup_logging(app_name="sync_service", log_dir=PROJECT_ROOT / "logs", force_console=True)
+
     logger.info("=== ЗАПУСК СЕРВИСА СИНХРОНИЗАЦИИ В КОНСОЛЬНОМ РЕЖИМЕ ===")
     
     manager = SyncManager(background_mode=True)
