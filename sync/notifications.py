@@ -4,6 +4,7 @@ from PyQt5.QtCore import Qt
 
 logger = logging.getLogger(__name__)
 
+
 class Notifier:
     @staticmethod
     def show(title: str, message: str, parent=None):
@@ -12,11 +13,9 @@ class Notifier:
             # Сначала пробуем показать системное уведомление
             try:
                 from plyer import notification
+
                 notification.notify(
-                    title=title,
-                    message=message,
-                    app_name='WorkLog',
-                    timeout=5
+                    title=title, message=message, app_name="WorkLog", timeout=5
                 )
                 return
             except ImportError:

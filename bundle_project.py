@@ -21,53 +21,144 @@ inspect_and_bundle.py — единый инструмент:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import mimetypes
 import os
 import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import Iterable, List, Dict, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 # -----------------------------------
 # 1) Настройки для дерева и бандла
 # -----------------------------------
 
-EXCLUDE_TREE = {'.venv', '__pycache__', '.git', '.idea', 'dist', 'build', '.vscode', '.mypy_cache', '.pytest_cache', '.ruff_cache', 'node_modules', 'target', 'out'}
+EXCLUDE_TREE = {
+    ".venv",
+    "__pycache__",
+    ".git",
+    ".idea",
+    "dist",
+    "build",
+    ".vscode",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "node_modules",
+    "target",
+    "out",
+}
 DEFAULT_EXCLUDE_DIRS = {
-    ".git", ".hg", ".svn", ".idea", ".vscode",
-    ".venv", "venv", "env",
-    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    "build", "dist", ".cache", ".eggs", ".tox", ".coverage",
-    "node_modules", "target", "out"
+    ".git",
+    ".hg",
+    ".svn",
+    ".idea",
+    ".vscode",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+    ".cache",
+    ".eggs",
+    ".tox",
+    ".coverage",
+    "node_modules",
+    "target",
+    "out",
 }
 
 # Текстовые расширения (можно расширить через --include-ext)
 DEFAULT_INCLUDE_EXTS = {
     # code
-    ".py", ".pyw", ".ipynb",
-    ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte",
-    ".java", ".kt", ".kts", ".scala", ".go", ".rb", ".php",
-    ".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rs", ".swift",
+    ".py",
+    ".pyw",
+    ".ipynb",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".vue",
+    ".svelte",
+    ".java",
+    ".kt",
+    ".kts",
+    ".scala",
+    ".go",
+    ".rb",
+    ".php",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".rs",
+    ".swift",
     # web / markup
-    ".html", ".htm", ".css", ".scss", ".sass",
-    ".xml", ".xsd", ".xslt",
+    ".html",
+    ".htm",
+    ".css",
+    ".scss",
+    ".sass",
+    ".xml",
+    ".xsd",
+    ".xslt",
     # config
-    ".json", ".jsonc", ".yaml", ".yml", ".ini", ".cfg", ".toml", ".env",
+    ".json",
+    ".jsonc",
+    ".yaml",
+    ".yml",
+    ".ini",
+    ".cfg",
+    ".toml",
+    ".env",
     # scripts
-    ".bat", ".cmd", ".ps1", ".psm1", ".sh", ".bash",
+    ".bat",
+    ".cmd",
+    ".ps1",
+    ".psm1",
+    ".sh",
+    ".bash",
     # data-ish (text)
-    ".md", ".rst", ".txt", ".csv", ".tsv", ".sql",
+    ".md",
+    ".rst",
+    ".txt",
+    ".csv",
+    ".tsv",
+    ".sql",
     # project files
-    ".sln", ".csproj", ".vbproj", ".props", ".targets", ".cmake", "CMakeLists.txt",
-    ".gradle", ".pro", ".pri", "Makefile", "Dockerfile", "Procfile",
+    ".sln",
+    ".csproj",
+    ".vbproj",
+    ".props",
+    ".targets",
+    ".cmake",
+    "CMakeLists.txt",
+    ".gradle",
+    ".pro",
+    ".pri",
+    "Makefile",
+    "Dockerfile",
+    "Procfile",
 }
-SPECIAL_FILENAMES = {"Makefile", "Dockerfile", "Procfile", "CMakeLists.txt", ".gitignore", ".gitattributes"}
+SPECIAL_FILENAMES = {
+    "Makefile",
+    "Dockerfile",
+    "Procfile",
+    "CMakeLists.txt",
+    ".gitignore",
+    ".gitattributes",
+}
 
 # -----------------------------------
 # 2) Вспомогалки
 # -----------------------------------
+
 
 def normalize_extensions_set(exts: Iterable[str]) -> set[str]:
     out = set()
@@ -80,17 +171,21 @@ def normalize_extensions_set(exts: Iterable[str]) -> set[str]:
         out.add(e)
     return out
 
+
 def is_binary_by_chunk(p: Path, chunk_size: int = 2048) -> bool:
     try:
         with p.open("rb") as f:
             chunk = f.read(chunk_size)
         if b"\x00" in chunk:
             return True
-        text_chars = bytearray({7,8,9,10,12,13,27} | set(range(0x20, 0x100)) - {0x7f})
+        text_chars = bytearray(
+            {7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)) - {0x7F}
+        )
         nontext = chunk.translate(None, text_chars)
         return len(nontext) / max(1, len(chunk)) > 0.30
     except Exception:
         return True
+
 
 def should_include_file(p: Path, include_exts: set[str]) -> bool:
     name = p.name
@@ -104,9 +199,12 @@ def should_include_file(p: Path, include_exts: set[str]) -> bool:
         return True
     return False
 
+
 def sha256_of_text(s: str) -> str:
     import hashlib as _h
+
     return _h.sha256(s.encode("utf-8", errors="replace")).hexdigest()
+
 
 def read_text_best_effort(p: Path) -> str:
     for enc in ("utf-8", "utf-8-sig", "cp1251", "latin-1"):
@@ -119,9 +217,11 @@ def read_text_best_effort(p: Path) -> str:
     except Exception:
         return ""
 
+
 # -----------------------------------
 # 3) Дерево проекта (в строку)
 # -----------------------------------
+
 
 def render_tree(dir_path: Path, prefix: str = "", exclude: set[str] = None) -> str:
     exclude = exclude or set()
@@ -140,11 +240,15 @@ def render_tree(dir_path: Path, prefix: str = "", exclude: set[str] = None) -> s
             lines.append(render_tree(path, prefix + extension, exclude))
     return "\n".join(lines)
 
+
 # -----------------------------------
 # 4) Сбор файлов проекта в TXT
 # -----------------------------------
 
-def collect_files(root: Path, include_exts: set[str], exclude_dirs: set[str], max_bytes: int) -> List[Path]:
+
+def collect_files(
+    root: Path, include_exts: set[str], exclude_dirs: set[str], max_bytes: int
+) -> List[Path]:
     files: List[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
@@ -166,17 +270,18 @@ def collect_files(root: Path, include_exts: set[str], exclude_dirs: set[str], ma
     files.sort(key=lambda x: str(x).lower())
     return files
 
+
 def write_bundle(out, root: Path, files: List[Path]) -> None:
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     header = [
         "=" * 80,
-        f"PROJECT REPORT",
+        "PROJECT REPORT",
         f"Generated:   {ts}",
         f"Root:        {root}",
         f"Python:      {sys.version.split()[0]}",
         f"Files:       {len(files)}",
         "=" * 80,
-        ""
+        "",
     ]
     out.write("\n".join(header) + "\n")
     for p in files:
@@ -201,16 +306,21 @@ def write_bundle(out, root: Path, files: List[Path]) -> None:
             out.write(f"# ERROR: {e}\n")
             out.write("-" * 80 + "\n\n")
 
+
 # -----------------------------------
 # 5) Инспекция SQLite
 # -----------------------------------
 
-def _sql_fetchall_safe(cur: sqlite3.Cursor, sql: str, params: Tuple = ()) -> List[Tuple]:
+
+def _sql_fetchall_safe(
+    cur: sqlite3.Cursor, sql: str, params: Tuple = ()
+) -> List[Tuple]:
     try:
         cur.execute(sql, params)
         return cur.fetchall()
     except Exception:
         return []
+
 
 def introspect_sqlite(db_path: Path, sample_limit: int = 5) -> str:
     out: List[str] = []
@@ -233,7 +343,8 @@ def introspect_sqlite(db_path: Path, sample_limit: int = 5) -> str:
 
         # Таблицы (кроме служебных)
         tables = _sql_fetchall_safe(
-            cur, "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"
+            cur,
+            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;",
         )
         for name, create_sql in tables:
             out.append("-" * 80)
@@ -245,7 +356,9 @@ def introspect_sqlite(db_path: Path, sample_limit: int = 5) -> str:
             if cols:
                 out.append("columns:")
                 for cid, cname, ctype, notnull, dflt, pk in cols:
-                    out.append(f"  - {cname} {ctype or ''} NOTNULL={notnull} PK={pk} DEFAULT={dflt}")
+                    out.append(
+                        f"  - {cname} {ctype or ''} NOTNULL={notnull} PK={pk} DEFAULT={dflt}"
+                    )
 
             # Индексы
             idxs = _sql_fetchall_safe(cur, f"PRAGMA index_list({name});")
@@ -261,7 +374,9 @@ def introspect_sqlite(db_path: Path, sample_limit: int = 5) -> str:
 
             # Триггеры по таблице
             trigs = _sql_fetchall_safe(
-                cur, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name;", (name,)
+                cur,
+                "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name;",
+                (name,),
             )
             if trigs:
                 out.append("triggers:")
@@ -274,14 +389,20 @@ def introspect_sqlite(db_path: Path, sample_limit: int = 5) -> str:
                 out.append(f"rows_count: {cnt[0][0]}")
 
             # Примеры строк
-            samples = _sql_fetchall_safe(cur, f"SELECT * FROM {name} ORDER BY ROWID DESC LIMIT {int(sample_limit)};")
+            samples = _sql_fetchall_safe(
+                cur,
+                f"SELECT * FROM {name} ORDER BY ROWID DESC LIMIT {int(sample_limit)};",
+            )
             if samples:
                 out.append("sample rows (last):")
                 for row in samples:
                     out.append(f"  • {row}")
 
         # Глобальные триггеры
-        gtrigs = _sql_fetchall_safe(cur, "SELECT name, tbl_name, sql FROM sqlite_master WHERE type='trigger' ORDER BY name;")
+        gtrigs = _sql_fetchall_safe(
+            cur,
+            "SELECT name, tbl_name, sql FROM sqlite_master WHERE type='trigger' ORDER BY name;",
+        )
         if gtrigs:
             out.append("-" * 80)
             out.append("[TRIGGERS GLOBAL]")
@@ -295,9 +416,11 @@ def introspect_sqlite(db_path: Path, sample_limit: int = 5) -> str:
     out.append("")
     return "\n".join(out)
 
+
 # -----------------------------------
 # 6) Инспекция Google Sheets
 # -----------------------------------
+
 
 def introspect_gsheets(sample_limit: int = 3) -> str:
     """
@@ -335,7 +458,9 @@ def introspect_gsheets(sample_limit: int = 3) -> str:
 
         # Заголовок и листы
         try:
-            from config import GOOGLE_SHEET_NAME  # имя книги хранится в конфиге :contentReference[oaicite:3]{index=3}
+            from config import (
+                GOOGLE_SHEET_NAME,
+            )  # имя книги хранится в конфиге :contentReference[oaicite:3]{index=3}
         except Exception:
             GOOGLE_SHEET_NAME = "(см. config)"
 
@@ -397,24 +522,76 @@ def introspect_gsheets(sample_limit: int = 3) -> str:
     out.append("")
     return "\n".join(out)
 
+
 # -----------------------------------
 # 7) Главная функция/CLI
 # -----------------------------------
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Собрать отчёт по проекту (дерево, бандл, SQLite, Google Sheets).")
-    ap.add_argument("-r", "--root", type=str, default=".", help="Корень проекта (default .)")
-    ap.add_argument("-o", "--output", type=str, default="project_report.txt", help="Путь к выходному TXT.")
-    ap.add_argument("--max-bytes", type=int, default=3_000_000, help="Макс. размер одного файла (байт).")
-    ap.add_argument("--include-ext", type=str, nargs="*", default=None, help="Доп. расширения (py toml conf ...)")
-    ap.add_argument("--exclude-dir", type=str, nargs="*", default=None, help="Доп. каталоги для исключения (имена).")
-    ap.add_argument("--git-only", action="store_true", help="Собирает только файлы, отслеживаемые Git.")
-    ap.add_argument("--no-tree", action="store_true", help="Не добавлять дерево проекта.")
+    ap = argparse.ArgumentParser(
+        description="Собрать отчёт по проекту (дерево, бандл, SQLite, Google Sheets)."
+    )
+    ap.add_argument(
+        "-r", "--root", type=str, default=".", help="Корень проекта (default .)"
+    )
+    ap.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="project_report.txt",
+        help="Путь к выходному TXT.",
+    )
+    ap.add_argument(
+        "--max-bytes",
+        type=int,
+        default=3_000_000,
+        help="Макс. размер одного файла (байт).",
+    )
+    ap.add_argument(
+        "--include-ext",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Доп. расширения (py toml conf ...)",
+    )
+    ap.add_argument(
+        "--exclude-dir",
+        type=str,
+        nargs="*",
+        default=None,
+        help="Доп. каталоги для исключения (имена).",
+    )
+    ap.add_argument(
+        "--git-only",
+        action="store_true",
+        help="Собирает только файлы, отслеживаемые Git.",
+    )
+    ap.add_argument(
+        "--no-tree", action="store_true", help="Не добавлять дерево проекта."
+    )
     ap.add_argument("--no-db", action="store_true", help="Не добавлять обзор SQLite.")
-    ap.add_argument("--no-sheets", action="store_true", help="Не добавлять обзор Google Sheets.")
-    ap.add_argument("--db", type=str, default=None, help="Путь к SQLite (иначе возьмём из config.LOCAL_DB_PATH).")
-    ap.add_argument("--db-sample", type=int, default=5, help="Количество строк-примеров из таблиц SQLite.")
-    ap.add_argument("--sheets-sample", type=int, default=3, help="Количество строк-примеров из листов Google Sheets.")
+    ap.add_argument(
+        "--no-sheets", action="store_true", help="Не добавлять обзор Google Sheets."
+    )
+    ap.add_argument(
+        "--db",
+        type=str,
+        default=None,
+        help="Путь к SQLite (иначе возьмём из config.LOCAL_DB_PATH).",
+    )
+    ap.add_argument(
+        "--db-sample",
+        type=int,
+        default=5,
+        help="Количество строк-примеров из таблиц SQLite.",
+    )
+    ap.add_argument(
+        "--sheets-sample",
+        type=int,
+        default=3,
+        help="Количество строк-примеров из листов Google Sheets.",
+    )
 
     args = ap.parse_args()
 
@@ -434,6 +611,7 @@ def main():
     if args.git_only:
         try:
             import subprocess
+
             res = subprocess.run(
                 ["git", "ls-files"],
                 check=True,
@@ -444,7 +622,9 @@ def main():
                 encoding="utf-8",
             )
             files = []
-            tracked = [root / line.strip() for line in res.stdout.splitlines() if line.strip()]
+            tracked = [
+                root / line.strip() for line in res.stdout.splitlines() if line.strip()
+            ]
             for p in tracked:
                 try:
                     if not p.exists() or not p.is_file():
@@ -460,7 +640,10 @@ def main():
                     continue
             files.sort(key=lambda x: str(x).lower())
         except Exception as e:
-            print(f"[WARN] git-only режим не удался: {e}. Переход к файловому обходу.", file=sys.stderr)
+            print(
+                f"[WARN] git-only режим не удался: {e}. Переход к файловому обходу.",
+                file=sys.stderr,
+            )
             files = collect_files(root, include_exts, exclude_dirs, args.max_bytes)
     else:
         files = collect_files(root, include_exts, exclude_dirs, args.max_bytes)
@@ -474,6 +657,7 @@ def main():
             # Попробуем достать из config.LOCAL_DB_PATH (у вас так и сделано в проекте) :contentReference[oaicite:4]{index=4}
             try:
                 import importlib
+
                 cfg = importlib.import_module("config")
                 db_path = Path(getattr(cfg, "LOCAL_DB_PATH"))
             except Exception:
@@ -511,6 +695,7 @@ def main():
         write_bundle(out, root, files)
 
     print(f"✓ Готово: {out_path}")
+
 
 if __name__ == "__main__":
     main()

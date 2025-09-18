@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import sys
-import os
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
-from typing import List, Tuple, Optional, Dict
+import datetime as dt
 import logging
 import argparse
 
@@ -22,9 +20,19 @@ logger = logging.getLogger(__name__)
 
 # ---- helpers ----
 
-TS_HEADER_CANDIDATES = ("timestamp", "Timestamp", "time", "Time", "Дата", "Время", "DateTime", "datetime")
+TS_HEADER_CANDIDATES = (
+    "timestamp",
+    "Timestamp",
+    "time",
+    "Time",
+    "Дата",
+    "Время",
+    "DateTime",
+    "datetime",
+)
 
-def _parse_ts(s: str) -> Optional[datetime]:
+
+def _parse_ts(s: str) -> dt.datetime | None:
     """
     Parse timestamp in flexible formats. Prefer ISO-8601 with timezone.
     Returns timezone-aware datetime in local timezone for date comparison.
@@ -43,30 +51,30 @@ def _parse_ts(s: str) -> Optional[datetime]:
     ]
     for f in fmts:
         try:
-            dt = datetime.strptime(s, f)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone()
+            parsed = dt.datetime.strptime(s, f)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.UTC)
+            return parsed.astimezone()
         except Exception:
             continue
     try:
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone()
+        parsed = dt.datetime.fromisoformat(s)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.UTC)
+        return parsed.astimezone()
     except Exception:
         return None
 
 
-def _yesterday_local(base: Optional[datetime] = None) -> datetime.date:
-    now_local = (base or datetime.now().astimezone())
-    return (now_local.date() - timedelta(days=1))
+def _yesterday_local(base: dt.datetime | None = None) -> dt.date:
+    now_local = base or dt.datetime.now().astimezone()
+    return now_local.date() - dt.timedelta(days=1)
 
 
-def _find_timestamp_index(header: List[str]) -> Optional[int]:
-    idx_map = { (h or "").strip(): i for i, h in enumerate(header) }
+def _find_timestamp_index(header: list[str]) -> int | None:
+    idx_map = {(h or "").strip(): i for i, h in enumerate(header)}
     for key in TS_HEADER_CANDIDATES:
-        for h,i in idx_map.items():
+        for h, i in idx_map.items():
             if h.lower() == key.lower():
                 return i
     if len(header) >= 6 and header[5].lower().startswith("time"):
@@ -74,7 +82,7 @@ def _find_timestamp_index(header: List[str]) -> Optional[int]:
     return None
 
 
-def _ensure_archive_sheet(sheets: SheetsAPI, header: List[str]) -> object:
+def _ensure_archive_sheet(sheets: SheetsAPI, header: list[str]) -> object:
     """
     Get archive worksheet; if missing — create and put header.
     """
@@ -88,13 +96,21 @@ def _ensure_archive_sheet(sheets: SheetsAPI, header: List[str]) -> object:
         return ws
     except SheetsAPIError:
         from config import GOOGLE_SHEET_NAME  # lazy import
+
         spreadsheet = sheets._request_with_retry(sheets.client.open, GOOGLE_SHEET_NAME)
-        ws = sheets._request_with_retry(spreadsheet.add_worksheet, title=ARCHIVE_SHEET, rows=1, cols=max(1, len(header)))
+        ws = sheets._request_with_retry(
+            spreadsheet.add_worksheet,
+            title=ARCHIVE_SHEET,
+            rows=1,
+            cols=max(1, len(header)),
+        )
         sheets._request_with_retry(ws.update, "A1", [header])
         return ws
 
 
-def _collect_rows_for_date(values: List[List[str]], day: datetime.date) -> Tuple[List[List[str]], List[List[str]], List[str]]:
+def _collect_rows_for_date(
+    values: list[list[str]], day: dt.date
+) -> tuple[list[list[str]], list[list[str]], list[str]]:
     """
     Split table rows to (to_archive, to_keep).
     Returns (to_archive_rows, keep_rows, header)
@@ -109,8 +125,8 @@ def _collect_rows_for_date(values: List[List[str]], day: datetime.date) -> Tuple
         logger.warning("Timestamp column not found in header: %s", header)
         return [], values[1:], header
 
-    to_archive: List[List[str]] = []
-    keep_rows: List[List[str]] = []
+    to_archive: list[list[str]] = []
+    keep_rows: list[list[str]] = []
 
     for row in body:
         ts_raw = row[ts_idx] if ts_idx < len(row) else ""
@@ -123,7 +139,9 @@ def _collect_rows_for_date(values: List[List[str]], day: datetime.date) -> Tuple
     return to_archive, keep_rows, header
 
 
-def _process_sheet(sheets: SheetsAPI, sheet_name: str, day: datetime.date, dry_run: bool = False) -> Tuple[int,int]:
+def _process_sheet(
+    sheets: SheetsAPI, sheet_name: str, day: dt.date, dry_run: bool = False
+) -> tuple[int, int]:
     """
     Process one sheet: move rows for `day` to ARCHIVE_SHEET.
     Returns (archived_count, kept_count)
@@ -141,13 +159,17 @@ def _process_sheet(sheets: SheetsAPI, sheet_name: str, day: datetime.date, dry_r
             logger.info("[%s] no rows for %s", sheet_name, day.isoformat())
             return 0, len(keep)
 
-        logger.info("[%s] archiving %d rows for %s", sheet_name, archived, day.isoformat())
+        logger.info(
+            "[%s] archiving %d rows for %s", sheet_name, archived, day.isoformat()
+        )
 
         if dry_run:
             return archived, len(keep)
 
         arch = _ensure_archive_sheet(sheets, header)
-        sheets._request_with_retry(arch.append_rows, to_move, value_input_option="USER_ENTERED")
+        sheets._request_with_retry(
+            arch.append_rows, to_move, value_input_option="USER_ENTERED"
+        )
 
         new_data = [header] + keep if keep else [header]
         sheets._request_with_retry(ws.clear)
@@ -159,7 +181,9 @@ def _process_sheet(sheets: SheetsAPI, sheet_name: str, day: datetime.date, dry_r
         return 0, 0
 
 
-def run_archive(target_date: Optional[str] = None, dry_run: bool = False, only_sheet: Optional[str] = None) -> None:
+def run_archive(
+    target_date: str | None = None, dry_run: bool = False, only_sheet: str | None = None
+) -> None:
     """
     Archive rows for yesterday (or for specific date YYYY-MM-DD) from WorkLog sheets to Archive.
     - If `only_sheet` is provided, process only that sheet.
@@ -169,19 +193,19 @@ def run_archive(target_date: Optional[str] = None, dry_run: bool = False, only_s
 
     if target_date:
         try:
-            day = datetime.strptime(target_date, "%Y-%m-%d").date()
-        except Exception:
-            raise SystemExit("Invalid --date format. Use YYYY-MM-DD")
+            day = dt.datetime.strptime(target_date, "%Y-%m-%d").date()
+        except Exception as e:
+            raise SystemExit("Invalid --date format. Use YYYY-MM-DD") from e
     else:
         day = _yesterday_local()
 
-    titles: List[str] = []
+    titles: list[str] = []
     try:
         titles = sheets.list_worksheet_titles()
     except Exception:
         pass
 
-    candidates: List[str] = []
+    candidates: list[str] = []
     if only_sheet:
         if only_sheet not in titles:
             raise SystemExit(f"Sheet '{only_sheet}' not found in {GOOGLE_SHEET_NAME}")
@@ -201,18 +225,35 @@ def run_archive(target_date: Optional[str] = None, dry_run: bool = False, only_s
         total_archived += a
 
     if dry_run:
-        logger.info("DRY-RUN complete. Would archive %d rows total for %s.", total_archived, day.isoformat())
+        logger.info(
+            "DRY-RUN complete. Would archive %d rows total for %s.",
+            total_archived,
+            day.isoformat(),
+        )
     else:
-        logger.info("Archive complete. Archived %d rows total for %s.", total_archived, day.isoformat())
+        logger.info(
+            "Archive complete. Archived %d rows total for %s.",
+            total_archived,
+            day.isoformat(),
+        )
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Archive yesterday's rows from WorkLog sheets to Archive via SheetsAPI.")
-    ap.add_argument("--date", help="Target date YYYY-MM-DD (default: yesterday in local tz)", default=None)
-    ap.add_argument("--dry-run", action="store_true", help="Do not modify sheets, just report.")
+    ap = argparse.ArgumentParser(
+        description="Archive yesterday's rows from WorkLog sheets to Archive via SheetsAPI."
+    )
+    ap.add_argument(
+        "--date",
+        help="Target date YYYY-MM-DD (default: yesterday in local tz)",
+        default=None,
+    )
+    ap.add_argument(
+        "--dry-run", action="store_true", help="Do not modify sheets, just report."
+    )
     ap.add_argument("--only-sheet", help="Process only given sheet name", default=None)
     args = ap.parse_args()
     run_archive(target_date=args.date, dry_run=args.dry_run, only_sheet=args.only_sheet)
+
 
 if __name__ == "__main__":
     main()

@@ -2,12 +2,13 @@
 from .version import __version__
 
 __all__ = [
-    'main',
-    'gui', 
-    'login_window',
-    'db_local',
-    'sheets_api',
-    'sync'
+    "main",
+    "gui",
+    "login_window",
+    "db_local",
+    "sheets_api",
+    "sync",
+    "__version__",
 ]
 
 # Инициализация путей

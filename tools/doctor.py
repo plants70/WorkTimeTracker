@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List
 
-from config import LOG_DIR, get_credentials_file, GOOGLE_SHEET_NAME
+from config import LOG_DIR, get_credentials_file
 from user_app.db_local import LocalDB
 from logging_setup import setup_logging
 from sheets_api import get_sheets_api
@@ -20,19 +20,32 @@ from notifications.rules_manager import RULES_SHEET
 EXPECTED = {
     "Users": ["Email", "Name", "Group"],  # базовые атрибуты пользователя
     "ActiveSessions": [
-        "Email", "Name", "SessionID", "LoginTime", "Status", "LogoutTime",
-        "RemoteCommand"  # обязательно
+        "Email",
+        "Name",
+        "SessionID",
+        "LoginTime",
+        "Status",
+        "LogoutTime",
+        "RemoteCommand",  # обязательно
         # Рекомендуемая колонка для аудита подтверждений:
         # "RemoteCommandAck"
     ],
 }
 
 
-def dump_sqlite_schema(conn: sqlite3.Connection, sample_limit: int = 5) -> Dict[str, Any]:
+def dump_sqlite_schema(
+    conn: sqlite3.Connection, sample_limit: int = 5
+) -> Dict[str, Any]:
     cur = conn.cursor()
-    cur.execute("SELECT name, type, sql FROM sqlite_master WHERE type IN ('table','index','trigger') ORDER BY name;")
+    cur.execute(
+        "SELECT name, type, sql FROM sqlite_master WHERE type IN ('table','index','trigger') ORDER BY name;"
+    )
     items = [{"name": n, "type": t, "sql": s} for (n, t, s) in cur.fetchall()]
-    tables = [i["name"] for i in items if i["type"] == "table" and not i["name"].startswith("sqlite_")]
+    tables = [
+        i["name"]
+        for i in items
+        if i["type"] == "table" and not i["name"].startswith("sqlite_")
+    ]
     stats = {}
     extra = {}
     samples = {}
@@ -59,7 +72,6 @@ def dump_sqlite_schema(conn: sqlite3.Connection, sample_limit: int = 5) -> Dict[
 
 def dump_sheets_structure(api) -> Dict[str, Any]:
     client = api
-    book_name = "CONFIGURED"
     data: Dict[str, Any] = {"worksheets": []}
     # перечислим листы и их заголовки
     try:
@@ -68,9 +80,18 @@ def dump_sheets_structure(api) -> Dict[str, Any]:
         return {"error": f"list_worksheet_titles failed: {e}", "worksheets": []}
     for t in titles:
         try:
-            ws = client._get_ws(t)  # внутренняя помощ. функция допустима для диагностики
+            ws = client._get_ws(
+                t
+            )  # внутренняя помощ. функция допустима для диагностики
             header = [h.strip() for h in ws.row_values(1)]
-            data["worksheets"].append({"title": t, "header": header, "rows_hint": ws.row_count, "cols_hint": ws.col_count})
+            data["worksheets"].append(
+                {
+                    "title": t,
+                    "header": header,
+                    "rows_hint": ws.row_count,
+                    "cols_hint": ws.col_count,
+                }
+            )
         except Exception as e:
             data["worksheets"].append({"title": t, "error": str(e)})
     # лёгкая валидация ожидаемых колонок
@@ -84,8 +105,14 @@ def dump_sheets_structure(api) -> Dict[str, Any]:
             if missing:
                 mismatches.append({"sheet": w["title"], "missing": missing})
         # мягкая рекомендация по RemoteCommandAck
-        if w["title"] == "ActiveSessions" and "header" in w and "RemoteCommandAck" not in w["header"]:
-            mismatches.append({"sheet": w["title"], "missing_recommended": ["RemoteCommandAck"]})
+        if (
+            w["title"] == "ActiveSessions"
+            and "header" in w
+            and "RemoteCommandAck" not in w["header"]
+        ):
+            mismatches.append(
+                {"sheet": w["title"], "missing_recommended": ["RemoteCommandAck"]}
+            )
     data["expectations"] = mismatches
     return data
 
@@ -142,7 +169,9 @@ def render_markdown(report: Dict[str, Any]) -> str:
             if "missing" in p:
                 lines.append(f"- `{p['sheet']}`: {', '.join(p['missing'])}")
             elif "missing_recommended" in p:
-                lines.append(f"- `{p['sheet']}`: рекомендуется добавить {', '.join(p['missing_recommended'])}")
+                lines.append(
+                    f"- `{p['sheet']}`: рекомендуется добавить {', '.join(p['missing_recommended'])}"
+                )
         lines.append("")
     ws = sh.get("worksheets", [])
     for w in ws:
@@ -192,7 +221,9 @@ def run(out: Path) -> None:
     if out_path.suffix.lower() == ".md":
         out_path.write_text(render_markdown(report), encoding="utf-8")
     else:
-        out_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        out_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     print(f"OK: written {out_path}")
 
 
@@ -200,25 +231,47 @@ def main():
     ap = argparse.ArgumentParser(
         description="WorkTimeTracker Doctor: локальная БД + структура Google Sheets + быстрая валидация."
     )
-    ap.add_argument("-o", "--output", default="diagnostics_report.json",
-                    help="Путь к итоговому отчёту (JSON или MD).")
-    ap.add_argument("--sample-sheets", type=int, default=0,
-                    help="Сколько строк-образцов выводить из листов (0=не выводить).")
+    ap.add_argument(
+        "-o",
+        "--output",
+        default="diagnostics_report.json",
+        help="Путь к итоговому отчёту (JSON или MD).",
+    )
+    ap.add_argument(
+        "--sample-sheets",
+        type=int,
+        default=0,
+        help="Сколько строк-образцов выводить из листов (0=не выводить).",
+    )
     # логирование
-    ap.add_argument("--debug", action="store_true",
-                    help="Включить подробные DEBUG-логи и вывод в консоль.")
-    ap.add_argument("--log-level", choices=["DEBUG","INFO","WARNING","ERROR","CRITICAL"],
-                    help="Уровень логов (по умолчанию INFO, либо DEBUG при --debug).")
-    ap.add_argument("--console", action="store_true",
-                    help="Дублировать логи в консоль (как WTT_LOG_CONSOLE=1).")
+    ap.add_argument(
+        "--debug",
+        action="store_true",
+        help="Включить подробные DEBUG-логи и вывод в консоль.",
+    )
+    ap.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Уровень логов (по умолчанию INFO, либо DEBUG при --debug).",
+    )
+    ap.add_argument(
+        "--console",
+        action="store_true",
+        help="Дублировать логи в консоль (как WTT_LOG_CONSOLE=1).",
+    )
     args = ap.parse_args()
 
     # Логирование: файл + (опц.) консоль
-    level = logging.DEBUG if args.debug else (getattr(logging, args.log_level, None) if args.log_level else None)
+    level = (
+        logging.DEBUG
+        if args.debug
+        else (getattr(logging, args.log_level, None) if args.log_level else None)
+    )
     force_console = True if (args.debug or args.console) else None
-    setup_logging(app_name="wtt-doctor", log_dir=LOG_DIR, level=level, force_console=force_console)
-    logger = logging.getLogger(__name__)
-    
+    setup_logging(
+        app_name="wtt-doctor", log_dir=LOG_DIR, level=level, force_console=force_console
+    )
+
     # --- Проверка NotificationRules: булево в MessageTemplate ---
     try:
         api = get_sheets_api()
@@ -230,16 +283,18 @@ def main():
                 i = hdr.index("MessageTemplate")
                 bad = []
                 for r in rows[1:]:
-                    if not r or i >= len(r): 
+                    if not r or i >= len(r):
                         continue
                     v = (r[i] or "").strip().upper()
-                    if v in ("TRUE","FALSE"):
+                    if v in ("TRUE", "FALSE"):
                         bad.append(r)
                 if bad:
-                    print(f"WARNING: {len(bad)} rule(s) have boolean in MessageTemplate; default text will be used.")
+                    print(
+                        f"WARNING: {len(bad)} rule(s) have boolean in MessageTemplate; default text will be used."
+                    )
     except Exception as e:
         print(f"Doctor: rules check skipped: {e}")
-    
+
     run(Path(args.output))
 
 

@@ -1,7 +1,6 @@
 # sync/service_alerts.py
 from __future__ import annotations
 import logging
-from typing import Optional
 from telegram_bot.notifier import TelegramNotifier
 from config import SERVICE_ALERTS_ENABLED, SERVICE_ALERT_MIN_SECONDS
 
@@ -9,12 +8,14 @@ log = logging.getLogger(__name__)
 
 _last: dict[str, float] = {}
 
+
 def _should_skip(key: str, now_ts: float, min_gap: int) -> bool:
     last = _last.get(key, 0.0)
     if now_ts - last < min_gap:
         return True
     _last[key] = now_ts
     return False
+
 
 def alert_sync_error(err_text: str, now_ts: float) -> None:
     """Позовите при фатальной/повторяющейся ошибке цикла синхронизации."""
@@ -24,7 +25,10 @@ def alert_sync_error(err_text: str, now_ts: float) -> None:
     if _should_skip(key, now_ts, SERVICE_ALERT_MIN_SECONDS):
         return
     n = TelegramNotifier()
-    n.send_service(f"🛠️ Ошибка синхронизации:\n<code>{(err_text or '').strip()[:500]}</code>")
+    n.send_service(
+        f"🛠️ Ошибка синхронизации:\n<code>{(err_text or '').strip()[:500]}</code>"
+    )
+
 
 def alert_queue_size(queue_len: int, threshold: int, now_ts: float) -> None:
     """
@@ -39,4 +43,6 @@ def alert_queue_size(queue_len: int, threshold: int, now_ts: float) -> None:
     if _should_skip(key, now_ts, SERVICE_ALERT_MIN_SECONDS):
         return
     n = TelegramNotifier()
-    n.send_service(f"🛠️ Очередь синка выросла: {queue_len} (порог {threshold}). Проверьте соединение/квоты.")
+    n.send_service(
+        f"🛠️ Очередь синка выросла: {queue_len} (порог {threshold}). Проверьте соединение/квоты."
+    )
