@@ -44,7 +44,7 @@ try:
         SYNC_INTERVAL_OFFLINE_RECOVERY,
     )
     from user_app.db_local import LocalDB
-    from sheets_api import get_sheets_api
+    from sheets_api import get_sheets_api, SheetsAPIError
 
     # сохраняем прежнее имя переменной для кода ниже
     sheets_api = get_sheets_api()
@@ -292,6 +292,7 @@ class SyncManager(QObject):
                             continue
                         actions_payload.append(
                             {
+                                "id": a["id"],
                                 "session_id": a["session_id"],
                                 "email": a["email"],
                                 "name": a["name"],
@@ -312,11 +313,31 @@ class SyncManager(QObject):
                         )
                         break
 
-                    # Используем новую сигнатуру API с передачей user_group
-                    ok = sheets_api.log_user_actions(
-                        actions_payload, email, user_group=user_group
-                    )
-                    if ok:
+                    success = True
+                    for payload in actions_payload:
+                        try:
+                            sheets_api.log_user_actions(
+                                email=payload["email"],
+                                action=payload.get("action_type", ""),
+                                status=payload.get("status", ""),
+                                group=user_group,
+                                timestamp_utc=payload.get("timestamp"),
+                                start_utc=payload.get("status_start_time"),
+                                end_utc=payload.get("status_end_time"),
+                                session_id=payload.get("session_id"),
+                                group_at_start=user_group,
+                            )
+                        except SheetsAPIError as exc:
+                            logger.warning(
+                                "Не удалось синхронизировать действие id=%s для %s: %s",
+                                payload.get("id"),
+                                email,
+                                exc,
+                            )
+                            success = False
+                            break
+
+                    if success:
                         success_count += len(actions_payload)
                         synced_ids.extend(filtered)
                         logger.info(

@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import STATUS_GROUPS, MAX_COMMENT_LENGTH
-from sheets_api import get_sheets_api
+from sheets_api import get_sheets_api, SheetsAPIError
 from user_app.db_local import LocalDB, LocalDBError, write_tx
 
 try:
@@ -137,17 +137,26 @@ class EmployeeApp(QWidget):
                 return
 
             action = self._make_action_payload_from_row(row)
-            # ВАЖНО: сначала actions (список словарей), затем email
-            ok = self.sheets_api.log_user_actions(
-                [action], action["email"], user_group=user_group or self.group
-            )
-            if ok:
+            target_group = user_group or self.group or None
+            try:
+                self.sheets_api.log_user_actions(
+                    email=action["email"],
+                    action=action.get("action_type", ""),
+                    status=action.get("status", ""),
+                    group=target_group,
+                    timestamp_utc=action.get("timestamp"),
+                    start_utc=action.get("status_start_time"),
+                    end_utc=action.get("status_end_time"),
+                    session_id=action.get("session_id"),
+                    group_at_start=target_group,
+                )
+            except SheetsAPIError as exc:
+                logger.warning(
+                    "Sheets: не удалось записать действие в WorkLog — %s", exc
+                )
+            else:
                 self.db.mark_actions_synced([record_id])
                 self.last_sync_time = datetime.now()
-            else:
-                logger.warning(
-                    "Sheets: log_user_actions вернул False — оставляю запись несинхронизированной"
-                )
         except Exception as e:
             logger.warning(f"Ошибка отправки действия в Google Sheets: {e}")
             Notifier.show(
@@ -169,16 +178,27 @@ class EmployeeApp(QWidget):
             return
         try:
             action = self._make_action_payload_from_row(row)
-            ok = self.sheets_api.log_user_actions(
-                [action], action["email"], user_group=self.group
-            )
-            if ok:
+            target_group = self.group or None
+            try:
+                self.sheets_api.log_user_actions(
+                    email=action["email"],
+                    action=action.get("action_type", ""),
+                    status=action.get("status", ""),
+                    group=target_group,
+                    timestamp_utc=action.get("timestamp"),
+                    start_utc=action.get("status_start_time"),
+                    end_utc=action.get("status_end_time"),
+                    session_id=action.get("session_id"),
+                    group_at_start=target_group,
+                )
+            except SheetsAPIError as exc:
+                logger.warning(
+                    "Sheets: не удалось синхронизировать завершённый статус — %s",
+                    exc,
+                )
+            else:
                 self.db.mark_actions_synced([prev_id])
                 self.last_sync_time = datetime.now()
-            else:
-                logger.warning(
-                    "Sheets: log_user_actions вернул False — оставляю запись несинхронизированной"
-                )
         except Exception as e:
             logger.warning(f"Ошибка отправки завершённого статуса в Sheets: {e}")
             Notifier.show(

@@ -167,9 +167,6 @@ WORKLOG_HEADERS = [
     "SessionID",
     "EventID",
     "GroupAtStart",
-    "Reason",
-    "Comment",
-    "Name",
 ]
 
 ARCHIVE_SHEET = "Archive"

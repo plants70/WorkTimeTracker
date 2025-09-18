@@ -14,6 +14,7 @@ from google.oauth2.service_account import Credentials
 from dataclasses import dataclass
 import threading
 from zoneinfo import ZoneInfo  # stdlib (Python 3.9+)
+from uuid import uuid4
 
 logger = logging.getLogger(
     "sheets_api"
@@ -33,6 +34,12 @@ class QuotaInfo:
     remaining: int
     reset_time: int
     daily_used: float
+
+
+@dataclass
+class WorklogWorksheetInfo:
+    worksheet: Any
+    header_to_col_index: dict[str, int]
 
 
 class SheetsAPIError(Exception):
@@ -96,9 +103,6 @@ def _worklog_headers() -> list[str]:
         "SessionID",
         "EventID",
         "GroupAtStart",
-        "Reason",
-        "Comment",
-        "Name",
     ]
 
 
@@ -547,35 +551,73 @@ class SheetsAPI:
         prefix = WORKLOG_SHEET_PREFIX.rstrip("_")  # "WorkLog"
         return f"{prefix}_{g}"
 
-    def _ensure_worklog_worksheet(self, group: str | None):
-        """
-        Возвращает открытую вкладку WorkLog_<Group>. Создаёт при необходимости (если включено в конфиге).
-        """
-        from config import AUTOCREATE_WORKLOG_SHEET, WORKLOG_HEADERS
+    def get_or_create_worklog_ws(self, group: str | None) -> WorklogWorksheetInfo:
+        """Возвращает WorkLog worksheet c гарантированным набором заголовков."""
+        from config import AUTOCREATE_WORKLOG_SHEET, GOOGLE_SHEET_NAME, WORKLOG_HEADERS
 
+        desired_headers = list(WORKLOG_HEADERS)
         name = self._resolve_worklog_sheet_name(group)
-        if self.has_worksheet(name):
-            return self._get_ws(name)
-        if not AUTOCREATE_WORKLOG_SHEET:
-            raise SheetsAPIError(
-                f"WorkLog worksheet '{name}' not found and autocreate disabled",
-                is_retryable=False,
-            )
-        # создаём лист и пишем заголовок
-        from config import GOOGLE_SHEET_NAME
+        created = False
 
-        spreadsheet = self._request_with_retry(self.client.open, GOOGLE_SHEET_NAME)
-        ws = self._request_with_retry(
-            spreadsheet.add_worksheet, title=name, rows=1000, cols=len(WORKLOG_HEADERS)
-        )
-        # заголовок
-        self._request_with_retry(
-            ws.update, f"A1:{chr(ord('A')+len(WORKLOG_HEADERS)-1)}1", [WORKLOG_HEADERS]
-        )
-        # кешируем
-        self._sheet_cache[name] = ws
-        logger.info(f"Worksheet '{name}' created and cached")
-        return ws
+        if self.has_worksheet(name):
+            ws = self._get_ws(name)
+        else:
+            if not AUTOCREATE_WORKLOG_SHEET:
+                raise SheetsAPIError(
+                    f"WorkLog worksheet '{name}' not found and autocreate disabled",
+                    is_retryable=False,
+                )
+            spreadsheet = self._request_with_retry(self.client.open, GOOGLE_SHEET_NAME)
+            ws = self._request_with_retry(
+                spreadsheet.add_worksheet,
+                title=name,
+                rows=1000,
+                cols=max(len(desired_headers), 20),
+            )
+            header_range = f"A1:{self._num_to_a1_col(len(desired_headers))}1"
+            self._request_with_retry(ws.update, header_range, [desired_headers])
+            self._sheet_cache[name] = ws
+            created = True
+
+        try:
+            raw_header = self._request_with_retry(ws.row_values, 1)
+        except Exception:
+            raw_header = []
+
+        header_row = [str(cell).strip() for cell in raw_header]
+        header_changed = False
+
+        if not header_row:
+            header_row = desired_headers.copy()
+            header_changed = True
+        else:
+            existing_map = {h: idx for idx, h in enumerate(header_row, start=1) if h}
+            for header in desired_headers:
+                if header not in existing_map:
+                    header_row.append(header)
+                    existing_map[header] = len(header_row)
+                    header_changed = True
+
+        if header_changed and header_row:
+            header_range = f"A1:{self._num_to_a1_col(len(header_row))}1"
+            self._request_with_retry(ws.update, header_range, [header_row])
+            if created:
+                logger.info(f"WorkLog headers created for {name}")
+            else:
+                logger.info(f"WorkLog headers updated for {name}")
+        else:
+            logger.info(f"WorkLog headers verified for {name}")
+
+        header_to_col = {
+            str(header).strip(): idx
+            for idx, header in enumerate(header_row, start=1)
+            if str(header).strip()
+        }
+        return WorklogWorksheetInfo(worksheet=ws, header_to_col_index=header_to_col)
+
+    def _ensure_worklog_worksheet(self, group: str | None):
+        info = self.get_or_create_worklog_ws(group)
+        return info.worksheet
 
     # ---------- header/table parsing ----------
 
@@ -740,24 +782,16 @@ class SheetsAPI:
             if not (c_status and c_logout):
                 raise SheetsAPIError("ActiveSessions headers missing Status/LogoutTime")
 
-            # 1) точный матч
-            exact_idx = None
-            for i, r in enumerate(table, start=2):
-                if (r.get("Email", "") or "").strip().lower() == em and str(
-                    r.get("SessionID", "")
-                ).strip() == sid:
-                    exact_idx = i
-                    break
-                else:
-                    # краткий лог для дебага совпадений
-                    if (r.get("Email", "") or "").strip().lower() == em:
-                        logger.debug(
-                            f"[finish_active_session] mismatch sid: row_sid={str(r.get('SessionID','')).strip()} wanted={sid}, row_status={(r.get('Status','') or '').strip()}"
-                        )
+            logout_dt_obj = self._as_utc_datetime(logout_time)
+            if logout_dt_obj is None:
+                logout_dt_obj = dt.datetime.now(dt.UTC)
+                lt_source = self._fmt_iso_utc(logout_dt_obj)
+            else:
+                lt_source = logout_time or self._fmt_iso_utc(logout_dt_obj)
 
-            lt = self._ensure_local_str(logout_time)
+            lt = self._ensure_local_str(lt_source)
 
-            def apply_update(row_idx: int) -> None:
+            def apply_update(row_idx: int, row_dict: dict[str, str]) -> bool:
                 cols = sorted([c_status, c_logout])
                 left = self._num_to_a1_col(cols[0])
                 right = self._num_to_a1_col(cols[-1])
@@ -766,10 +800,25 @@ class SheetsAPI:
                 buf[c_status - cols[0]] = "finished"
                 buf[c_logout - cols[0]] = lt
                 self._request_with_retry(lambda: ws.update(rng, [buf]))
-
-            if exact_idx:
-                apply_update(exact_idx)
+                self._update_worklog_logout(
+                    email=email,
+                    session_id=sid,
+                    logout_dt=logout_dt_obj,
+                    active_row=row_dict,
+                )
                 return True
+
+            if exact_match := next(
+                (
+                    (i, r)
+                    for i, r in enumerate(table, start=2)
+                    if (r.get("Email", "") or "").strip().lower() == em
+                    and str(r.get("SessionID", "")).strip() == sid
+                ),
+                None,
+            ):
+                row_idx, row_dict = exact_match
+                return apply_update(row_idx, row_dict)
 
             # 2) фоллбэк: последняя активная по email
             candidates = [
@@ -789,9 +838,8 @@ class SheetsAPI:
                 idx, row = t
                 return ((row.get("LoginTime") or "").strip(), idx)
 
-            row_idx, _ = sorted(candidates, key=sort_key)[-1]
-            apply_update(row_idx)
-            return True
+            row_idx, row_dict = sorted(candidates, key=sort_key)[-1]
+            return apply_update(row_idx, row_dict)
         except Exception as e:
             logger.error(f"finish_active_session failed: {e}")
             return False
@@ -934,79 +982,287 @@ class SheetsAPI:
                 return r.get("RemoteCommand") or r.get("remotecommand")
         return None
 
-    # ---------- WorkLog append (batch) ----------
+    # ---------- WorkLog logging ----------
     def log_user_actions(
         self,
-        actions: list[dict[str, Any]],
-        email: str | None = None,
-        group: str | None = None,
-        **kwargs,
-    ) -> bool:
-        """
-        Записывает список действий пользователя в соответствующую WorkLog-вкладку по группе.
-        Совместим со старыми вызовами: принимает и user_group=... в kwargs.
+        email: str,
+        action: str,
+        status: str,
+        group: str | None,
+        *,
+        timestamp_utc: dt.datetime | str,
+        start_utc: dt.datetime | str | None = None,
+        end_utc: dt.datetime | str | None = None,
+        session_id: str | None = None,
+        event_id: str | None = None,
+        group_at_start: str | None = None,
+    ) -> str:
+        """Добавляет запись в WorkLog_<Group> с гарантированными колонками."""
 
-        actions: [{'timestamp': iso, 'email', 'name', 'status', 'action_type', 'comment', 'session_id', 'event_id', ...}, ...]
-        """
         try:
-            # backward-compat: user_group alias
-            user_group = kwargs.pop("user_group", None)
-            if group is None and user_group is not None:
-                group = user_group
+            event_id = event_id or str(uuid4())
+            timestamp_dt = self._as_utc_datetime(timestamp_utc) or dt.datetime.now(dt.UTC)
+            start_dt = self._as_utc_datetime(start_utc)
+            end_dt = self._as_utc_datetime(end_utc)
 
-            # если в actions у каждой записи есть своя группа, используем первую; иначе — аргумент
-            if not group:
-                for a in actions:
-                    g = a.get("group") or a.get("Group")
-                    if g:
-                        group = g
-                        break
+            duration = ""
+            if start_dt and end_dt:
+                delta = end_dt - start_dt
+                minutes = max(0, int(delta.total_seconds() // 60))
+                duration = str(minutes)
 
-            ws = self._ensure_worklog_worksheet(group)
-            headers_map = self._header_map(ws)  # lower->1-based
+            payload = {
+                "Timestamp": self._fmt_iso_utc(timestamp_dt),
+                "Email": (email or "").strip(),
+                "Action": action or "",
+                "Status": status or "",
+                "Group": group or "",
+                "Start": self._fmt_iso_utc(start_dt),
+                "End": self._fmt_iso_utc(end_dt),
+                "Duration": duration,
+                "SessionID": session_id or "",
+                "EventID": event_id,
+                "GroupAtStart": group_at_start or group or "",
+            }
 
-            # Соберём строки согласно текущему заголовку листа
-            # Нормализуем ключи к lower для сопоставления
-            rows: list[list[Any]] = []
-            for a in actions:
-                norm = {str(k).strip().lower(): v for k, v in a.items()}
-                # Унифицируем основные поля
-                # timestamp -> локальная строка
-                ts = norm.get("timestamp") or norm.get("time") or norm.get("date")
-                ts = self._ensure_local_str(ts)
-                # session/event ids — опционально
-                # собираем в порядке реального header’а листа
-                maxcol = max(headers_map.values()) if headers_map else 0
-                inv = {v: k for k, v in headers_map.items()}  # 1-based -> lower
-                row = []
-                for col in range(1, maxcol + 1):
-                    key = inv.get(col, "")
-                    if not key:
-                        row.append("")
-                        continue
-                    if key == "timestamp":
-                        row.append(ts)
-                    else:
-                        row.append(norm.get(key, ""))
-                rows.append(row)
+            target_group = group or "Default"
+            info = self.get_or_create_worklog_ws(target_group)
+            headers_map = info.header_to_col_index
+            max_col = max(headers_map.values()) if headers_map else len(payload)
+            row = [""] * max_col
 
-            if not rows:
-                return True
+            for key, value in payload.items():
+                col = headers_map.get(key)
+                if not col:
+                    continue
+                if col > len(row):
+                    row.extend([""] * (col - len(row)))
+                row[col - 1] = value
 
-            # batch update — по 200 строк (gspread limit-friendly)
-            BATCH = 200
-            for i in range(0, len(rows), BATCH):
-                chunk = rows[i : i + BATCH]
-                self._request_with_retry(
-                    ws.append_rows, chunk, value_input_option="USER_ENTERED"
-                )
-            logger.info(f"log_user_actions: appended {len(rows)} rows to {ws.title}")
-            return True
+            self._request_with_retry(
+                info.worksheet.append_row, row, value_input_option="USER_ENTERED"
+            )
+            logger.info(
+                f"WorkLog append: {event_id} (session={session_id or '-'}, group={target_group})"
+            )
+            return event_id
+        except SheetsAPIError:
+            raise
         except Exception as e:
             logger.error(f"log_user_actions failed: {e}")
-            return False
+            raise SheetsAPIError(
+                "Failed to append WorkLog row", is_retryable=True, details=str(e)
+            ) from e
+
+    def _update_worklog_logout(
+        self,
+        *,
+        email: str,
+        session_id: str,
+        logout_dt: dt.datetime | None,
+        active_row: dict[str, str] | None,
+    ) -> bool:
+        """Обновляет End/Duration в WorkLog по session_id или создаёт LOGOUT-запись."""
+
+        logout_dt = logout_dt or dt.datetime.now(dt.UTC)
+
+        candidates: list[str | None] = []
+        seen: set[str | None] = set()
+
+        def add_candidate(value: str | None) -> None:
+            key = (value or "").strip() or None
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(key)
+
+        if active_row:
+            add_candidate(active_row.get("Group"))
+            add_candidate(active_row.get("group"))
+
+        # Попробуем выяснить группу пользователя через Users
+        try:
+            user = self.get_user_by_email(email)
+            if user:
+                add_candidate(user.get("group") or user.get("Group"))
+        except Exception:
+            pass
+
+        add_candidate(None)  # fallback на Default
+
+        best_match: tuple[WorklogWorksheetInfo, int, list[str]] | None = None
+
+        for group in candidates:
+            try:
+                info = self.get_or_create_worklog_ws(group)
+            except SheetsAPIError:
+                continue
+
+            header_map = info.header_to_col_index
+            session_col = header_map.get("SessionID")
+            if not session_col:
+                continue
+
+            end_col = header_map.get("End")
+            action_col = header_map.get("Action")
+
+            try:
+                data = self._request_with_retry(info.worksheet.get_all_values)
+            except Exception:
+                continue
+
+            if not data or len(data) < 2:
+                continue
+
+            fallback_login: tuple[int, list[str]] | None = None
+            for idx, row in enumerate(data[1:], start=2):
+                if session_col > len(row):
+                    continue
+                row_sid = (row[session_col - 1] or "").strip()
+                if row_sid != session_id:
+                    continue
+
+                end_value = ""
+                if end_col and end_col <= len(row):
+                    end_value = (row[end_col - 1] or "").strip()
+
+                action_value = ""
+                if action_col and action_col <= len(row):
+                    action_value = (row[action_col - 1] or "").strip().upper()
+
+                if not end_value:
+                    best_match = (info, idx, row)
+                elif action_value == "LOGIN" and not best_match:
+                    fallback_login = (idx, row)
+
+            if best_match:
+                break
+            if fallback_login:
+                best_match = (info, fallback_login[0], fallback_login[1])
+
+        if best_match:
+            info, row_idx, row_values = best_match
+            header_map = info.header_to_col_index
+            start_col = header_map.get("Start")
+            duration_col = header_map.get("Duration")
+            status_col = header_map.get("Status")
+
+            start_value = ""
+            if start_col and start_col <= len(row_values):
+                start_value = row_values[start_col - 1]
+
+            start_dt = self._as_utc_datetime(start_value)
+            duration = ""
+            if start_dt:
+                delta = logout_dt - start_dt
+                minutes = max(0, int(delta.total_seconds() // 60))
+                duration = str(minutes)
+
+            updates: dict[int, str] = {}
+            end_col = header_map.get("End")
+            if end_col:
+                updates[end_col] = self._fmt_iso_utc(logout_dt)
+            if duration_col:
+                updates[duration_col] = duration
+            if status_col:
+                current_status = ""
+                if status_col <= len(row_values):
+                    current_status = (row_values[status_col - 1] or "").strip()
+                if current_status.upper() != "LOGOUT":
+                    updates[status_col] = "LOGOUT"
+
+            if not updates:
+                return True
+
+            full_row = list(row_values)
+            max_index = max(updates)
+            if len(full_row) < max_index:
+                full_row.extend([""] * (max_index - len(full_row)))
+
+            for col, value in updates.items():
+                full_row[col - 1] = value
+
+            left = min(updates)
+            right = max(updates)
+            segment = full_row[left - 1 : right]
+            rng = f"{self._num_to_a1_col(left)}{row_idx}:{self._num_to_a1_col(right)}{row_idx}"
+            self._request_with_retry(lambda: info.worksheet.update(rng, [segment]))
+            logger.info(f"WorkLog update: End/Duration set (session={session_id})")
+            return True
+
+        # Если не нашли LOGIN-запись — создаём LOGOUT строку
+        fallback_group = None
+        for g in candidates:
+            if g:
+                fallback_group = g
+                break
+
+        login_start = None
+        if active_row:
+            login_start = active_row.get("LoginTime") or active_row.get("logintime")
+
+        try:
+            self.log_user_actions(
+                email=email,
+                action="LOGOUT",
+                status="LOGOUT",
+                group=fallback_group,
+                timestamp_utc=logout_dt,
+                start_utc=login_start,
+                end_utc=logout_dt,
+                session_id=session_id,
+                group_at_start=fallback_group,
+            )
+            return True
+        except SheetsAPIError:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Failed to append fallback LOGOUT row for session={session_id}: {e}"
+            )
+            raise SheetsAPIError(
+                "Failed to append fallback WorkLog logout row",
+                is_retryable=True,
+                details=str(e),
+            ) from e
 
     # ---------- utils ----------
+
+    def _as_utc_datetime(
+        self, value: dt.datetime | str | None
+    ) -> dt.datetime | None:
+        """Преобразует ISO/локальную строку или datetime в UTC datetime."""
+
+        if value is None:
+            return None
+
+        dt_obj: dt.datetime
+        if isinstance(value, dt.datetime):
+            dt_obj = value
+        else:
+            text = str(value).strip()
+            if not text:
+                return None
+            try:
+                dt_obj = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                try:
+                    dt_obj = dt.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    return None
+
+        if dt_obj.tzinfo is None:
+            tz = self._get_tz()
+            try:
+                dt_obj = dt_obj.replace(tzinfo=tz)
+            except Exception:
+                dt_obj = dt_obj.replace(tzinfo=dt.UTC)
+        return dt_obj.astimezone(dt.UTC)
+
+    def _fmt_iso_utc(self, value: dt.datetime | None) -> str:
+        if not value:
+            return ""
+        return value.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def _num_to_a1_col(self, n: int) -> str:
         """Конвертирует номер колонки (1-based) в A1-нотацию (A, B, ..., Z, AA, ...)."""
