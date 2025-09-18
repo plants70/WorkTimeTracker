@@ -33,3 +33,19 @@ include = ["admin_app*", "user_app*", "sync*", "tools*", "telegram_bot*", "notif
 
 [tool.setuptools]
 py-modules = ["logging_setup", "config", "sheets_api"]
+
+[tool.ruff]
+exclude = [".git", ".venv", "build", "dist", "__pycache__", "*.egg-info"]
+
+[tool.ruff.lint]
+select = ["E", "F"]
+extend-select = ["B904", "UP017"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"admin_app/schedule_parser.py" = ["E402"]
+"archiver.py" = ["E402"]
+"config.py" = ["E402"]
+"sync/session_inspector.py" = ["E402"]
+"user_app/gui.py" = ["E402"]
+"user_app/main.py" = ["E402"]

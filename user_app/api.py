@@ -1,22 +1,24 @@
 # user_app/api.py
 from __future__ import annotations
-from typing import Optional, Dict, List
 from sheets_api import SheetsAPI
-from datetime import datetime, timezone
+import datetime as dt
 import uuid
+
 
 class UserNotFound(Exception):
     pass
+
 
 class UserAPI:
     """
     Сервис-слой user_app: вся работа с Google Sheets только через SheetsAPI.
     """
-    def __init__(self, sheets: Optional[SheetsAPI] = None):
+
+    def __init__(self, sheets: SheetsAPI | None = None):
         self.sheets = sheets or SheetsAPI()
 
     # ---- Users ----
-    def find_user(self, email: str) -> Dict:
+    def find_user(self, email: str) -> dict:
         email = (email or "").strip().lower()
         user = self.sheets.get_user_by_email(email)
         if not user:
@@ -34,7 +36,7 @@ class UserAPI:
             email=email,
             name=name,
             session_id=session_id,
-            login_time=datetime.now(timezone.utc).isoformat()
+            login_time=dt.datetime.now(dt.UTC).isoformat(),
         )
         return session_id
 
@@ -49,5 +51,7 @@ class UserAPI:
         return st in ("kicked", "finished")
 
     # ---- WorkLog ----
-    def log_actions(self, actions: List[Dict], email: str, user_group: Optional[str] = None) -> bool:
+    def log_actions(
+        self, actions: list[dict], email: str, user_group: str | None = None
+    ) -> bool:
         return self.sheets.log_user_actions(actions, email=email, user_group=user_group)

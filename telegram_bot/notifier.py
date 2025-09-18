@@ -1,8 +1,8 @@
 # telegram_bot/notifier.py
 from __future__ import annotations
-import logging, time
-from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple, List
+import logging
+import time
+import datetime as dt
 import requests
 import os
 
@@ -34,7 +34,7 @@ NOTIFICATIONS_LOG_SHEET = "NotificationsLog"
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return dt.datetime.now(dt.UTC).astimezone().isoformat(timespec="seconds")
 
 
 def _bool(v, default=False):
@@ -52,13 +52,14 @@ class TelegramNotifier:
       - group/broadcast → TELEGRAM_BROADCAST_CHAT_ID с префиксом [Группа]/[Все]
     Аудит в лист NotificationsLog (создаётся автоматически).
     """
+
     def __init__(
         self,
-        token: Optional[str] = None,
-        admin_chat_id: Optional[str] = None,
-        broadcast_chat_id: Optional[str] = None,
-        min_interval_sec: Optional[int] = None,
-        default_silent: Optional[bool] = None,
+        token: str | None = None,
+        admin_chat_id: str | None = None,
+        broadcast_chat_id: str | None = None,
+        min_interval_sec: int | None = None,
+        default_silent: bool | None = None,
     ):
         # Приоритет: явный аргумент → ENV → config.py
         self.token = (
@@ -75,42 +76,50 @@ class TelegramNotifier:
             or os.getenv("TELEGRAM_ADMIN_CHAT_ID", "")
             or (CFG_TELEGRAM_ADMIN_CHAT_ID or "")
         ).strip()
-        
+
         self.broadcast_chat = str(
             broadcast_chat_id
             or os.getenv("TELEGRAM_BROADCAST_CHAT_ID", "")
             or (CFG_TELEGRAM_BROADCAST_CHAT_ID or "")
         ).strip()
-        
+
         self.min_interval = int(
             (min_interval_sec if min_interval_sec is not None else 0)
             or os.getenv("TELEGRAM_MIN_INTERVAL_SEC", "")
-            or (CFG_TELEGRAM_MIN_INTERVAL_SEC if CFG_TELEGRAM_MIN_INTERVAL_SEC is not None else 600)
+            or (
+                CFG_TELEGRAM_MIN_INTERVAL_SEC
+                if CFG_TELEGRAM_MIN_INTERVAL_SEC is not None
+                else 600
+            )
         )
-        
+
         self.default_silent = (
             _bool(default_silent)
             if default_silent is not None
-            else _bool(os.getenv("TELEGRAM_SILENT"))
-            if os.getenv("TELEGRAM_SILENT") is not None
-            else _bool(CFG_TELEGRAM_SILENT)
+            else (
+                _bool(os.getenv("TELEGRAM_SILENT"))
+                if os.getenv("TELEGRAM_SILENT") is not None
+                else _bool(CFG_TELEGRAM_SILENT)
+            )
         )
 
-        self._last_sent: Dict[str, float] = {}      # анти-спам (key -> ts)
-        self._links_cache: Dict[str, str] = {}      # email -> chat_id
+        self._last_sent: dict[str, float] = {}  # анти-спам (key -> ts)
+        self._links_cache: dict[str, str] = {}  # email -> chat_id
         self._links_ts: float = 0.0
-        self._links_ttl: float = 300.0              # 5 минут
+        self._links_ttl: float = 300.0  # 5 минут
         self._sheets: SheetsAPI | None = None
-        
+
         # Модернизация: добавляем сессию с keep-alive и таймаутами
         self._session = requests.Session()
         self._session.headers.update({"Connection": "keep-alive"})
         self._timeout = (5, 15)  # (connect, read)
 
     # ---------- публичные API ----------
-    def send_service(self, text: str, *, silent: Optional[bool] = None) -> bool:
+    def send_service(self, text: str, *, silent: bool | None = None) -> bool:
         if not self.admin_chat:
-            log.warning("TELEGRAM_ADMIN_CHAT_ID не настроен (поставьте переменную окружения или значение в config.py).")
+            log.warning(
+                "TELEGRAM_ADMIN_CHAT_ID не настроен (поставьте переменную окружения или значение в config.py)."
+            )
             return False
         key = f"svc:{hash(text)}"
         if self._skip_by_rate(key):
@@ -119,7 +128,9 @@ class TelegramNotifier:
         self._audit("service", f"admin:{self.admin_chat}", text, ok, err)
         return ok
 
-    def send_personal(self, email: str, text: str, *, silent: Optional[bool] = None) -> bool:
+    def send_personal(
+        self, email: str, text: str, *, silent: bool | None = None
+    ) -> bool:
         chat_id = self._resolve_chat_id(email)
         if not chat_id:
             self._audit("personal", f"email:{email}", text, False, "chat_id not found")
@@ -131,8 +142,14 @@ class TelegramNotifier:
         self._audit("personal", f"email:{email}", text, ok, err)
         return ok
 
-    def send_group(self, text: str, *, group: Optional[str] = None, for_all: bool = False,
-                   silent: Optional[bool] = None) -> bool:
+    def send_group(
+        self,
+        text: str,
+        *,
+        group: str | None = None,
+        for_all: bool = False,
+        silent: bool | None = None,
+    ) -> bool:
         if not self.broadcast_chat:
             log.warning("TELEGRAM_BROADCAST_CHAT_ID не настроен.")
             return False
@@ -142,7 +159,13 @@ class TelegramNotifier:
         if self._skip_by_rate(key):
             return False
         ok, err = self._send_text(self.broadcast_chat, payload_text, silent)
-        self._audit("group_all" if for_all else "group", f"chat:{self.broadcast_chat}", payload_text, ok, err)
+        self._audit(
+            "group_all" if for_all else "group",
+            f"chat:{self.broadcast_chat}",
+            payload_text,
+            ok,
+            err,
+        )
         return ok
 
     # ---------- helpers ----------
@@ -160,16 +183,22 @@ class TelegramNotifier:
         self._last_sent[key] = now
         return False
 
-    def _send_text(self, chat_id: str, text: str, silent: Optional[bool]) -> Tuple[bool, Optional[str]]:
+    def _send_text(
+        self, chat_id: str, text: str, silent: bool | None
+    ) -> tuple[bool, str | None]:
         payload = {
             "chat_id": chat_id,
             "text": text,
             "parse_mode": "HTML",
-            "disable_notification": self.default_silent if silent is None else bool(silent),
+            "disable_notification": (
+                self.default_silent if silent is None else bool(silent)
+            ),
         }
         try:
             # Модернизация: используем сессию с таймаутом
-            r = self._session.post(f"{self.api_url}/sendMessage", json=payload, timeout=self._timeout)
+            r = self._session.post(
+                f"{self.api_url}/sendMessage", json=payload, timeout=self._timeout
+            )
             data = r.json()
             if not data.get("ok", False):
                 err = data.get("description") or r.text
@@ -180,12 +209,12 @@ class TelegramNotifier:
             log.exception("Telegram sendMessage exception: %s", e)
             return False, str(e)
 
-    def _resolve_chat_id(self, email: str) -> Optional[str]:
+    def _resolve_chat_id(self, email: str) -> str | None:
         email = (email or "").strip().lower()
         links = self._load_links_cache()
         return links.get(email)
 
-    def _load_links_cache(self) -> Dict[str, str]:
+    def _load_links_cache(self) -> dict[str, str]:
         if (time.monotonic() - self._links_ts) < self._links_ttl and self._links_cache:
             return self._links_cache
         try:
@@ -198,8 +227,9 @@ class TelegramNotifier:
             ix_tg = None
             for name in ("telegram", "telegramchatid", "tg"):
                 if name in lh:
-                    ix_tg = lh.index(name); break
-            cache: Dict[str, str] = {}
+                    ix_tg = lh.index(name)
+                    break
+            cache: dict[str, str] = {}
             if ix_email is not None and ix_tg is not None:
                 for r in values[1:]:
                     e = (r[ix_email] if ix_email < len(r) else "").strip().lower()
@@ -211,16 +241,31 @@ class TelegramNotifier:
             log.error("Не удалось загрузить Users -> Telegram: %s", e)
         return self._links_cache
 
-    def _audit(self, kind: str, target: str, text: str, ok: bool, err: Optional[str]) -> None:
+    def _audit(
+        self, kind: str, target: str, text: str, ok: bool, err: str | None
+    ) -> None:
         try:
             api = self._sheets_api()
             ss = api.client.open(GOOGLE_SHEET_NAME)
             titles = [w.title for w in ss.worksheets()]
             if NOTIFICATIONS_LOG_SHEET not in titles:
-                ws_new = ss.add_worksheet(title=NOTIFICATIONS_LOG_SHEET, rows=2000, cols=6)
-                api._request_with_retry(ws_new.update, "A1", [["Ts","Kind","Target","Status","Preview","Error"]])
+                ws_new = ss.add_worksheet(
+                    title=NOTIFICATIONS_LOG_SHEET, rows=2000, cols=6
+                )
+                api._request_with_retry(
+                    ws_new.update,
+                    "A1",
+                    [["Ts", "Kind", "Target", "Status", "Preview", "Error"]],
+                )
             ws = ss.worksheet(NOTIFICATIONS_LOG_SHEET)
-            row = [_now_iso(), kind, target, "OK" if ok else "FAIL", (text or "")[:180], (err or "")[:180]]
+            row = [
+                _now_iso(),
+                kind,
+                target,
+                "OK" if ok else "FAIL",
+                (text or "")[:180],
+                (err or "")[:180],
+            ]
             api._request_with_retry(ws.append_rows, [row], value_input_option="RAW")
         except Exception as e:
             log.debug("Аудит недоступен: %s", e)

@@ -74,7 +74,8 @@ def get_shift_calendar() -> List[List[str]]:
     if not sheet_name:
         logger.info(
             "Лист графика не найден. Ожидались один из: %s; есть: %s",
-            ", ".join(CANDIDATE_SCHEDULE_TITLES), ", ".join(titles),
+            ", ".join(CANDIDATE_SCHEDULE_TITLES),
+            ", ".join(titles),
         )
         return []
 
@@ -96,5 +97,7 @@ def get_shift_calendar() -> List[List[str]]:
 # Для обратной совместимости со старым именем
 def get_shift_info() -> List[List[str]]:
     """Старое имя функции, оставлено для совместимости."""
-    logger.warning("schedule_parser.get_shift_info() устарела — используйте AdminRepo.get_shift_calendar().")
+    logger.warning(
+        "schedule_parser.get_shift_info() устарела — используйте AdminRepo.get_shift_calendar()."
+    )
     return get_shift_calendar()

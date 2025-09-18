@@ -3,8 +3,14 @@ import logging
 import sys
 from pathlib import Path
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel,
-    QLineEdit, QPushButton, QMessageBox, QSpacerItem, QSizePolicy
+    QDialog,
+    QVBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QMessageBox,
+    QSpacerItem,
+    QSizePolicy,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QDateTime
 from PyQt5.QtGui import QIcon, QPixmap, QFont
@@ -28,15 +34,17 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+
 def to_snake_case(column_name):
     """Преобразует название колонки в snake_case для нормализации"""
     # Убираем лишние пробелы и приводим к нижнему регистру
     normalized = column_name.strip().lower()
     # Заменяем пробелы и дефисы на подчеркивания
-    normalized = re.sub(r'[\s-]+', '_', normalized)
+    normalized = re.sub(r"[\s-]+", "_", normalized)
     # Убираем все не-буквенно-цифровые символы, кроме подчеркиваний
-    normalized = re.sub(r'[^a-z0-9_]', '', normalized)
+    normalized = re.sub(r"[^a-z0-9_]", "", normalized)
     return normalized
+
 
 class LoginWindow(QDialog):
     login_success = pyqtSignal(dict)
@@ -57,7 +65,7 @@ class LoginWindow(QDialog):
         self._setup_shortcuts()
 
     def _resource_path(self, relative_path):
-        if hasattr(sys, '_MEIPASS'):
+        if hasattr(sys, "_MEIPASS"):
             base_path = Path(sys._MEIPASS)
         else:
             base_path = Path(__file__).parent.parent
@@ -75,8 +83,7 @@ class LoginWindow(QDialog):
             target_width = 170
             target_height = 70
             pixmap = pixmap.scaled(
-                target_width, target_height,
-                Qt.KeepAspectRatio, Qt.SmoothTransformation
+                target_width, target_height, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             logo_label.setPixmap(pixmap)
             logo_label.setAlignment(Qt.AlignCenter)
@@ -86,19 +93,24 @@ class LoginWindow(QDialog):
 
         title_label = QLabel("Вход в систему")
         title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("""
+        title_label.setStyleSheet(
+            """
             font-size: 22px;
             font-weight: bold;
             color: #222;
             margin-bottom: 15px;
-        """)
+        """
+        )
         layout.addWidget(title_label)
 
-        layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed))
+        layout.addSpacerItem(
+            QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Fixed)
+        )
 
         self.email_input = QLineEdit()
         self.email_input.setPlaceholderText("Корпоративный email")
-        self.email_input.setStyleSheet("""
+        self.email_input.setStyleSheet(
+            """
             QLineEdit {
                 padding: 11px;
                 border: 1.5px solid #ccc;
@@ -107,7 +119,8 @@ class LoginWindow(QDialog):
                 min-width: 290px;
                 max-width: 350px;
             }
-        """)
+        """
+        )
         self.email_input.setMinimumWidth(290)
         self.email_input.setMaximumWidth(350)
         layout.addWidget(self.email_input, alignment=Qt.AlignCenter)
@@ -115,7 +128,8 @@ class LoginWindow(QDialog):
         layout.addSpacerItem(QSpacerItem(20, 8, QSizePolicy.Minimum, QSizePolicy.Fixed))
 
         self.login_btn = QPushButton("Войти")
-        self.login_btn.setStyleSheet("""
+        self.login_btn.setStyleSheet(
+            """
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
@@ -131,19 +145,22 @@ class LoginWindow(QDialog):
             QPushButton:disabled {
                 background-color: #cccccc;
             }
-        """)
+        """
+        )
         self.login_btn.setMinimumHeight(40)
         self.login_btn.setMaximumWidth(220)
         self.login_btn.clicked.connect(self._try_login)
         layout.addWidget(self.login_btn, alignment=Qt.AlignCenter)
 
         self.status_label = QLabel()
-        self.status_label.setStyleSheet("""
+        self.status_label.setStyleSheet(
+            """
             color: #666;
             font-size: 13px;
             margin-top: 12px;
             min-height: 18px;
-        """)
+        """
+        )
         self.status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_label)
 
@@ -162,12 +179,12 @@ class LoginWindow(QDialog):
     def _normalize_user_data(self, user_data, email):
         """Нормализует данные пользователя, используя snake_case для ключей"""
         normalized_data = {}
-        
+
         # Создаем словарь с нормализованными ключами
         for key, value in user_data.items():
             normalized_key = to_snake_case(key)
             normalized_data[normalized_key] = value
-        
+
         # Возвращаем данные с безопасным доступом через .get()
         return {
             "email": normalized_data.get("email", email),
@@ -175,13 +192,15 @@ class LoginWindow(QDialog):
             "role": normalized_data.get("role", "специалист"),
             "shift_hours": normalized_data.get("shift_hours", "8 часов"),
             "telegram_login": normalized_data.get("telegram_login", ""),
-            "group": normalized_data.get("group", "")
+            "group": normalized_data.get("group", ""),
         }
 
     def _try_login(self):
         logger.info("LoginWindow: старт логина")
         if self.auth_in_progress or self._success_emitted:
-            logger.debug(f"LoginWindow: пропуск попытки логина (auth_in_progress={self.auth_in_progress}, _success_emitted={self._success_emitted})")
+            logger.debug(
+                f"LoginWindow: пропуск попытки логина (auth_in_progress={self.auth_in_progress}, _success_emitted={self._success_emitted})"
+            )
             return
         self.auth_in_progress = True
 
@@ -205,7 +224,12 @@ class LoginWindow(QDialog):
             return
 
         # Быстрая проверка совместимости API (чтобы не ловить AttributeError)
-        required_methods = ["get_user_by_email", "get_active_session", "set_active_session", "finish_active_session"]
+        required_methods = [
+            "get_user_by_email",
+            "get_active_session",
+            "set_active_session",
+            "finish_active_session",
+        ]
         for method_name in required_methods:
             if not hasattr(self.sheets_api, method_name):
                 error_msg = f"Ошибка подключения: SheetsAPI object has no attribute '{method_name}'"
@@ -220,10 +244,11 @@ class LoginWindow(QDialog):
         try:
             logger.debug("LoginWindow: вызов validate_config")
             validate_config()
-            
+
             # Проверяем доступность интернета (мягко)
             try:
                 from sync.network import is_internet_available
+
                 online = bool(is_internet_available())
             except Exception:
                 online = True
@@ -236,7 +261,9 @@ class LoginWindow(QDialog):
                 db = LocalDB()
                 cached = db.get_user_from_cache(email)
                 if not cached:
-                    raise RuntimeError("Нет подключения и пользователь не найден локально")
+                    raise RuntimeError(
+                        "Нет подключения и пользователь не найден локально"
+                    )
                 user_data = {
                     "Email": cached["email"],
                     "Name": cached["name"],
@@ -250,32 +277,43 @@ class LoginWindow(QDialog):
             # Опциональный автосайн-ап (включается ALLOW_SELF_SIGNUP в config.py)
             if not user_data:
                 from config import ALLOW_SELF_SIGNUP
+
                 if ALLOW_SELF_SIGNUP:
-                    logger.info("LoginWindow: email не найден, пробуем автосоздать пользователя")
+                    logger.info(
+                        "LoginWindow: email не найден, пробуем автосоздать пользователя"
+                    )
                     user_data = self.sheets_api.add_user_if_absent(email)
 
             if user_data:
                 logger.info("LoginWindow: пользователь найден, продолжаем")
-                
+
                 # Нормализуем данные пользователя
                 normalized_user_data = self._normalize_user_data(user_data, email)
-                logger.debug(f"LoginWindow: нормализованные данные пользователя: {normalized_user_data}")
-                
+                logger.debug(
+                    f"LoginWindow: нормализованные данные пользователя: {normalized_user_data}"
+                )
+
                 # При онлайн-логине обновляем кэш
                 if not user_data.get("_offline"):
                     try:
                         db = LocalDB()
-                        db.update_user_cache({
-                            "email": normalized_user_data["email"],
-                            "name": normalized_user_data["name"],
-                            "role": normalized_user_data["role"],
-                            "group": normalized_user_data["group"],
-                            "shift_hours": normalized_user_data["shift_hours"],
-                            "telegram_login": normalized_user_data["telegram_login"],
-                        })
+                        db.update_user_cache(
+                            {
+                                "email": normalized_user_data["email"],
+                                "name": normalized_user_data["name"],
+                                "role": normalized_user_data["role"],
+                                "group": normalized_user_data["group"],
+                                "shift_hours": normalized_user_data["shift_hours"],
+                                "telegram_login": normalized_user_data[
+                                    "telegram_login"
+                                ],
+                            }
+                        )
                     except Exception as e:
-                        logger.warning(f"Не удалось обновить локальный кэш пользователя: {e}")
-                
+                        logger.warning(
+                            f"Не удалось обновить локальный кэш пользователя: {e}"
+                        )
+
                 # --- ВСЕГДА ЗАВЕРШАЕМ СТАРУЮ СЕССИЮ И НАЧИНАЕМ НОВУЮ ---
                 # 1. Находим активную сессию с безопасным фолбэком
                 active_session = None
@@ -290,44 +328,64 @@ class LoginWindow(QDialog):
                         if not sessions and hasattr(self.sheets_api, "get_worksheet"):
                             # абсолютный фолбэк: прочитать лист ActiveSessions напрямую
                             from config import ACTIVE_SESSIONS_SHEET
+
                             ws = self.sheets_api.get_worksheet(ACTIVE_SESSIONS_SHEET)
-                            sessions = self.sheets_api._read_table(ws)  # безопасно, уже используется выше
+                            sessions = self.sheets_api._read_table(
+                                ws
+                            )  # безопасно, уже используется выше
                         em = (email or "").strip().lower()
                         candidates = []
                         for i, raw in enumerate(sessions, start=2):
                             a = {k: v for k, v in raw.items()}
-                            a.update({self.sheets_api._snake(k): v for k, v in raw.items()})
+                            a.update(
+                                {self.sheets_api._snake(k): v for k, v in raw.items()}
+                            )
                             if (a.get("email", "") or "").strip().lower() != em:
                                 continue
                             if (a.get("status", "") or "").strip().lower() != "active":
                                 continue
                             candidates.append((i, raw))
                         if candidates:
-                            candidates.sort(key=lambda t: ((t[1].get("LoginTime") or t[1].get("login_time") or ""), t[0]))
+                            candidates.sort(
+                                key=lambda t: (
+                                    (
+                                        t[1].get("LoginTime")
+                                        or t[1].get("login_time")
+                                        or ""
+                                    ),
+                                    t[0],
+                                )
+                            )
                             active_session = candidates[-1][1]
-                        logger.debug("LoginWindow: использован фолбэк для получения активной сессии")
+                        logger.debug(
+                            "LoginWindow: использован фолбэк для получения активной сессии"
+                        )
                     except Exception as e:
                         logger.debug(f"fallback get_active_session failed: {e}")
-                
+
                 if active_session:
                     session_id = active_session.get("SessionID")
                     login_time = active_session.get("LoginTime")
                     # Автоматически завершаем старую сессию без вопроса
-                    logger.info(f"LoginWindow: Автоматически завершаем старую сессию от {login_time}")
+                    logger.info(
+                        f"LoginWindow: Автоматически завершаем старую сессию от {login_time}"
+                    )
                     logout_time = QDateTime.currentDateTime().toString(Qt.ISODate)
-                    self.sheets_api.finish_active_session(email, session_id, logout_time)
-                
+                    self.sheets_api.finish_active_session(
+                        email, session_id, logout_time
+                    )
+
                 # 2. Создаем новую сессию
                 session_id = f"{email[:8]}_{QDateTime.currentDateTime().toString('yyyyMMddHHmmss')}"
                 self.sheets_api.set_active_session(
                     email,
                     normalized_user_data.get("name", ""),
                     session_id,
-                    QDateTime.currentDateTime().toString(Qt.ISODate)
+                    QDateTime.currentDateTime().toString(Qt.ISODate),
                 )
                 login_was_performed = True
                 # --- КОНЕЦ ---
-                
+
                 # Формируем данные для передачи в GUI
                 self.user_data = {
                     "email": normalized_user_data.get("email", email),
@@ -339,10 +397,14 @@ class LoginWindow(QDialog):
                     "login_was_performed": login_was_performed,
                     "session_id": session_id,
                 }
-                
+
                 # сохраняем email текущего пользователя для всех подсистем
                 try:
-                    email_value = (self.email_input.text() if hasattr(self, "email_input") else email).strip()
+                    email_value = (
+                        self.email_input.text()
+                        if hasattr(self, "email_input")
+                        else email
+                    ).strip()
                     session_state.set_user_email(email_value)
                 except Exception:
                     pass
@@ -362,7 +424,8 @@ class LoginWindow(QDialog):
 
         except Exception as e:
             logger.error(f"LoginWindow: Ошибка авторизации: {e}")
-            error_msg = f"Ошибка подключения: {str(e).replace("'", "")}"
+            clean_error = str(e).replace("'", "")
+            error_msg = f"Ошибка подключения: {clean_error}"
             self._show_error_once(error_msg)
             self.login_failed.emit(error_msg)
         finally:
@@ -378,7 +441,9 @@ class LoginWindow(QDialog):
         self.status_label.setText("Идет проверка данных..." if loading else "")
 
     def _show_error_once(self, message: str):
-        logger.debug(f"LoginWindow: _show_error_once вызван с message='{message}', _showing_error={self._showing_error}")
+        logger.debug(
+            f"LoginWindow: _show_error_once вызван с message='{message}', _showing_error={self._showing_error}"
+        )
         if self._showing_error:
             logger.warning("LoginWindow: попытка повторного показа ошибки, пропуск")
             return
@@ -395,8 +460,10 @@ class LoginWindow(QDialog):
         else:
             super().keyPressEvent(event)
 
+
 if __name__ == "__main__":
     from PyQt5.QtWidgets import QApplication
+
     logging.basicConfig(level=logging.DEBUG)
     app = QApplication(sys.argv)
     window = LoginWindow()

@@ -12,7 +12,19 @@ from .threading_utils import guard_gui_long_operation, is_gui_thread
 logger = logging.getLogger(__name__)
 
 _PROBE_URL = "https://www.google.com"
-_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+# Один воркер, чтобы не плодить потоки из GUI; при зависании пересоздаём.
+_EXECUTOR: ThreadPoolExecutor | None = ThreadPoolExecutor(max_workers=1)
+
+
+def _reset_executor() -> None:
+    """Безопасно пересоздать пул, чтобы не зависал на одном «залипшем» таске."""
+    global _EXECUTOR
+    try:
+        if _EXECUTOR is not None:
+            _EXECUTOR.shutdown(cancel_futures=True)
+    except Exception:
+        pass
+    _EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 
 def _probe_once(timeout: float) -> bool:
@@ -30,19 +42,26 @@ def is_internet_available(timeout: int = 3) -> bool:
     probe_timeout = max(1.0, float(timeout))
     guard_threshold = min(probe_timeout, 0.8)
 
-    with guard_gui_long_operation(
-        "network.is_internet_available", threshold=guard_threshold
-    ):
+    with guard_gui_long_operation("network.is_internet_available",
+                                  threshold=guard_threshold):
         try:
             if is_gui_thread():
-                future = _EXECUTOR.submit(_probe_once, probe_timeout)
-                return future.result(timeout=probe_timeout)
-            return _probe_once(probe_timeout)
-        except TimeoutError:
-            logger.warning(
-                "Интернет недоступен: проверка превысила %.1fs", probe_timeout
-            )
-            return False
+                # Отправляем проверку в фон, чтобы не блокировать GUI.
+                future = _EXECUTOR.submit(_probe_once, probe_timeout)  # type: ignore[arg-type]
+                try:
+                    return future.result(timeout=probe_timeout)
+                except TimeoutError:
+                    # Важно: отменяем зависший таск и пересоздаём пул,
+                    # иначе единственный воркер навсегда занят.
+                    future.cancel()
+                    _reset_executor()
+                    logger.warning(
+                        "Интернет недоступен: проверка превысила %.1fs",
+                        probe_timeout,
+                    )
+                    return False
+            else:
+                return _probe_once(probe_timeout)
         except (urllib.error.URLError, socket.timeout) as exc:
             logger.warning("Интернет недоступен: %s", exc)
             return False

@@ -1,15 +1,14 @@
 # admin_app/notifications_panel.py
 from __future__ import annotations
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets
 import logging
 
 from notifications.rules_manager import HEADER, load_rules, save_rules
-from sheets_api import SheetsAPI
-from config import GOOGLE_SHEET_NAME
 
 log = logging.getLogger(__name__)
 
 COLS = HEADER
+
 
 class NotificationsPanel(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -21,16 +20,20 @@ class NotificationsPanel(QtWidgets.QDialog):
         self.table = QtWidgets.QTableWidget(self)
         self.table.setColumnCount(len(COLS))
         self.table.setHorizontalHeaderLabels(COLS)
-        self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.Stretch
+        )
 
         btns = QtWidgets.QHBoxLayout()
         self.btn_add = QtWidgets.QPushButton("Добавить")
         self.btn_del = QtWidgets.QPushButton("Удалить")
         self.btn_reload = QtWidgets.QPushButton("Обновить из Sheets")
         self.btn_save = QtWidgets.QPushButton("Сохранить в Sheets")
-        btns.addWidget(self.btn_add); btns.addWidget(self.btn_del)
+        btns.addWidget(self.btn_add)
+        btns.addWidget(self.btn_del)
         btns.addStretch(1)
-        btns.addWidget(self.btn_reload); btns.addWidget(self.btn_save)
+        btns.addWidget(self.btn_reload)
+        btns.addWidget(self.btn_save)
 
         v.addWidget(self.table)
         v.addLayout(btns)
@@ -48,18 +51,22 @@ class NotificationsPanel(QtWidgets.QDialog):
         # Преобразуем в «строки» (не забудем ID)
         rows = []
         for r in rules:
-            rows.append([
-                str(r.id),
-                "TRUE" if r.enabled else "FALSE",
-                r.kind, r.scope, r.group_tag or "",
-                ",".join(r.statuses or []),
-                str(r.min_duration_min or ""),
-                str(r.window_min or ""),
-                str(r.limit or ""),
-                str(r.rate_limit_sec or ""),
-                "TRUE" if r.silent else "FALSE",
-                r.template or "",
-            ])
+            rows.append(
+                [
+                    str(r.id),
+                    "TRUE" if r.enabled else "FALSE",
+                    r.kind,
+                    r.scope,
+                    r.group_tag or "",
+                    ",".join(r.statuses or []),
+                    str(r.min_duration_min or ""),
+                    str(r.window_min or ""),
+                    str(r.limit or ""),
+                    str(r.rate_limit_sec or ""),
+                    "TRUE" if r.silent else "FALSE",
+                    r.template or "",
+                ]
+            )
         for row in rows:
             self._append_row(row)
 
@@ -79,8 +86,22 @@ class NotificationsPanel(QtWidgets.QDialog):
             except Exception:
                 pass
         new_id = max_id + 1
-        self._append_row([str(new_id), "TRUE", "long_status", "personal", "", "", "30", "", "", "1800", "FALSE",
-                          "⏰ Длительный статус: <b>{status}</b> уже <b>{duration_min} мин</b> (порог {min_duration_min} мин)."])
+        self._append_row(
+            [
+                str(new_id),
+                "TRUE",
+                "long_status",
+                "personal",
+                "",
+                "",
+                "30",
+                "",
+                "",
+                "1800",
+                "FALSE",
+                "⏰ Длительный статус: <b>{status}</b> уже <b>{duration_min} мин</b> (порог {min_duration_min} мин).",
+            ]
+        )
 
     def on_del(self):
         rows = sorted({i.row() for i in self.table.selectedIndexes()}, reverse=True)
@@ -97,7 +118,10 @@ class NotificationsPanel(QtWidgets.QDialog):
                 row.append(it.text().strip() if it else "")
             out.append(row)
         save_rules(out)
-        QtWidgets.QMessageBox.information(self, "Сохранено", "Таблица правил обновлена в Sheets.")
+        QtWidgets.QMessageBox.information(
+            self, "Сохранено", "Таблица правил обновлена в Sheets."
+        )
+
 
 def open_panel(parent=None):
     dlg = NotificationsPanel(parent)

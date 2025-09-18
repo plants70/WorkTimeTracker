@@ -21,7 +21,9 @@ from sheets_api import SheetsAPI  # Явный импорт класса SheetsA
 from auto_sync import SyncManager  # ← добавили
 from notifications.engine import start_background_poller
 from user_app import db_local  # ← добавили импорт
+
 atexit.register(db_local.close_connection)
+
 
 # ----- Сигналы приложения -----
 class ApplicationSignals(QObject):
@@ -33,6 +35,7 @@ class ApplicationSignals(QObject):
     sync_status_changed = pyqtSignal(bool)
     sync_progress = pyqtSignal(int, int)
     sync_finished = pyqtSignal(bool)
+
 
 # ----- Менеджер приложения -----
 class ApplicationManager(QObject):
@@ -49,7 +52,9 @@ class ApplicationManager(QObject):
 
         self.sync_thread: QThread | None = None
         self.sync_worker: SyncManager | None = None
-        self.sync_signals = SyncSignals()  # сигналы доступны и для GUI, и для SyncManager
+        self.sync_signals = (
+            SyncSignals()
+        )  # сигналы доступны и для GUI, и для SyncManager
 
         sys.excepthook = self.handle_uncaught_exception
 
@@ -58,8 +63,11 @@ class ApplicationManager(QObject):
             self._initialize_resources()
         except Exception as e:
             logging.getLogger(__name__).error("Init resources failed: %s", e)
-            QMessageBox.warning(None, "Офлайн режим",
-                                 "Не удалось подключиться к серверу.\nПриложение запущено в офлайн-режиме.")
+            QMessageBox.warning(
+                None,
+                "Офлайн режим",
+                "Не удалось подключиться к серверу.\nПриложение запущено в офлайн-режиме.",
+            )
             offline_mode = True
         self._start_sync_service(offline_mode=offline_mode)
         self.signals.app_started.emit()
@@ -69,12 +77,14 @@ class ApplicationManager(QObject):
         creds_path = get_credentials_file()
         if not creds_path.exists():
             raise FileNotFoundError(f"Credentials file not found: {creds_path}")
-        
+
         # Инициализация клиента Google Sheets + расширенная диагностика
         try:
             import sheets_api as _sheets_api_mod
+
             logging.getLogger(__name__).info(
-                "Using sheets_api module: %s", getattr(_sheets_api_mod, "__file__", "<unknown>")
+                "Using sheets_api module: %s",
+                getattr(_sheets_api_mod, "__file__", "<unknown>"),
             )
         except Exception:
             _sheets_api_mod = None
@@ -119,13 +129,17 @@ class ApplicationManager(QObject):
             logger.info("=== ЗАПУСК СЕРВИСА СИНХРОНИЗАЦИИ ===")
             # QThread + worker
             self.sync_thread = QThread(self)
-            self.sync_worker = SyncManager(signals=self.sync_signals, background_mode=True)
+            self.sync_worker = SyncManager(
+                signals=self.sync_signals, background_mode=True
+            )
             if offline_mode:
                 # мягкий режим восстановления сети
                 self.sync_worker._is_offline_recovery = True
                 self.sync_worker._sync_interval = 10
             self.sync_worker.moveToThread(self.sync_thread)
-            self.sync_thread.started.connect(self.sync_worker.run)  # run() есть в SyncManager
+            self.sync_thread.started.connect(
+                self.sync_worker.run
+            )  # run() есть в SyncManager
             self.sync_thread.start()
             logger.info("Sync service thread started (offline_mode=%s)", offline_mode)
         except Exception as e:
@@ -135,6 +149,7 @@ class ApplicationManager(QObject):
     def show_login_window(self):
         try:
             from user_app.login_window import LoginWindow
+
             self.login_window = LoginWindow()
             self.login_window.login_success.connect(self.handle_login_success)
             self.login_window.login_failed.connect(self.handle_login_failed)
@@ -181,12 +196,14 @@ class ApplicationManager(QObject):
                 on_logout_callback=on_logout_wrapper,
                 session_id=session_id,
                 login_was_performed=login_was_performed,
-                group=user_data.get("group", "")
+                group=user_data.get("group", ""),
             )
             self.main_window.show()
 
             # подключаем «принудительный разлогин» из сервиса синхронизации
-            self.sync_signals.force_logout.connect(self.main_window.force_logout_by_admin)
+            self.sync_signals.force_logout.connect(
+                self.main_window.force_logout_by_admin
+            )
             logger = logging.getLogger(__name__)
             logger.info("force_logout сигнал подключён к force_logout_by_admin")
 
@@ -206,10 +223,11 @@ class ApplicationManager(QObject):
     def handle_uncaught_exception(self, exc_type, exc_value, exc_traceback):
         logger = logging.getLogger(__name__)
         logger.critical(
-            "Unhandled exception",
-            exc_info=(exc_type, exc_value, exc_traceback)
+            "Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback)
         )
-        self._show_error("Critical Error", f"An unexpected error occurred:\n\n{exc_value}")
+        self._show_error(
+            "Critical Error", f"An unexpected error occurred:\n\n{exc_value}"
+        )
         self.quit_application()
 
     def quit_application(self):
@@ -244,6 +262,7 @@ class ApplicationManager(QObject):
                 self.sync_thread.wait(2000)
         finally:
             from user_app import db_local
+
             db_local.close_connection()
             self.app.quit()
 
@@ -251,6 +270,7 @@ class ApplicationManager(QObject):
     def run(self):
         self.show_login_window()
         sys.exit(self.app.exec_())
+
 
 # ----- CLI -----
 def main():
@@ -260,13 +280,13 @@ def main():
         log_path = setup_logging(app_name="wtt-user", log_dir=LOG_DIR)
         logger = logging.getLogger(__name__)
         logger.info("Logging initialized (path=%s)", log_path)
-        
+
         # один раз при старте
         db_local.init_db(DB_MAIN_PATH, DB_FALLBACK_PATH)
-        
+
         # Запускаем фоновый опросчик уведомлений
         poller_stop = start_background_poller(60)
-        
+
         app_manager = ApplicationManager()
         app_manager.run()
     except Exception as e:
@@ -277,6 +297,7 @@ def main():
         logger.info("Shutting down application.")
         if poller_stop:
             poller_stop.set()
+
 
 if __name__ == "__main__":
     main()

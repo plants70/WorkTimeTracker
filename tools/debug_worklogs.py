@@ -4,6 +4,7 @@ from config import DEFAULT_WORKLOG_GROUP, normalize_group_name
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
+
 def print_headers(ws):
     try:
         headers = get_sheets_api()._request_with_retry(ws.row_values, 1)
@@ -11,6 +12,7 @@ def print_headers(ws):
         print("   [ERR] не удалось прочитать шапку:", e)
         return
     print("   Шапка:", headers)
+
 
 def main():
     api = get_sheets_api()
@@ -34,6 +36,7 @@ def main():
             print_headers(ws)
         except Exception as e:
             print(f"[ERR] group={grp!r}: {e}")
+
 
 if __name__ == "__main__":
     main()

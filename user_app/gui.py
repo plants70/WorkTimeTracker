@@ -1,5 +1,4 @@
 import sys
-import os
 import logging
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -9,7 +8,7 @@ import threading
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import STATUSES, STATUS_GROUPS, MAX_COMMENT_LENGTH
+from config import STATUS_GROUPS, MAX_COMMENT_LENGTH
 from sheets_api import get_sheets_api
 from user_app.db_local import LocalDB, LocalDBError, write_tx
 
@@ -22,14 +21,21 @@ except ImportError:
         from notifications import Notifier
 
 from PyQt5.QtWidgets import (
-    QWidget, QLabel, QPushButton, QVBoxLayout,
-    QHBoxLayout, QMessageBox, QTextEdit,
-    QSizePolicy, QApplication
+    QWidget,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QHBoxLayout,
+    QMessageBox,
+    QTextEdit,
+    QSizePolicy,
+    QApplication,
 )
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QPixmap, QIcon
+from PyQt5.QtGui import QPixmap, QIcon
 
 logger = logging.getLogger(__name__)
+
 
 class EmployeeApp(QWidget):
     status_changed = pyqtSignal(str)
@@ -45,7 +51,7 @@ class EmployeeApp(QWidget):
         telegram_login: str = "",
         on_logout_callback: Optional[Callable] = None,
         session_id: Optional[str] = None,
-        login_was_performed: bool = True
+        login_was_performed: bool = True,
     ):
         super().__init__()
         self.email = email
@@ -115,31 +121,47 @@ class EmployeeApp(QWidget):
         }
 
     def _send_action_to_sheets(self, record_id, user_group=None):
-        threading.Thread(target=self._send_action_to_sheets_worker, args=(record_id, user_group), daemon=True).start()
+        threading.Thread(
+            target=self._send_action_to_sheets_worker,
+            args=(record_id, user_group),
+            daemon=True,
+        ).start()
 
     def _send_action_to_sheets_worker(self, record_id, user_group=None):
         try:
             row = self.db.get_action_by_id(record_id)
             if not row:
-                logger.error(f"Не удалось найти запись с id={record_id} для отправки в Sheets")
+                logger.error(
+                    f"Не удалось найти запись с id={record_id} для отправки в Sheets"
+                )
                 return
 
             action = self._make_action_payload_from_row(row)
             # ВАЖНО: сначала actions (список словарей), затем email
-            ok = self.sheets_api.log_user_actions([action], action["email"], user_group=user_group or self.group)
+            ok = self.sheets_api.log_user_actions(
+                [action], action["email"], user_group=user_group or self.group
+            )
             if ok:
                 self.db.mark_actions_synced([record_id])
                 self.last_sync_time = datetime.now()
             else:
-                logger.warning("Sheets: log_user_actions вернул False — оставляю запись несинхронизированной")
+                logger.warning(
+                    "Sheets: log_user_actions вернул False — оставляю запись несинхронизированной"
+                )
         except Exception as e:
             logger.warning(f"Ошибка отправки действия в Google Sheets: {e}")
-            Notifier.show("Оффлайн режим", "Данные будут отправлены при появлении интернета.")
+            Notifier.show(
+                "Оффлайн режим", "Данные будут отправлены при появлении интернета."
+            )
 
     def _finish_and_send_previous_status(self):
         prev_id = self.db.finish_last_status(self.email, self.session_id)
         if prev_id:
-            threading.Thread(target=self._finish_and_send_previous_status_worker, args=(prev_id,), daemon=True).start()
+            threading.Thread(
+                target=self._finish_and_send_previous_status_worker,
+                args=(prev_id,),
+                daemon=True,
+            ).start()
 
     def _finish_and_send_previous_status_worker(self, prev_id):
         row = self.db.get_action_by_id(prev_id)
@@ -147,15 +169,21 @@ class EmployeeApp(QWidget):
             return
         try:
             action = self._make_action_payload_from_row(row)
-            ok = self.sheets_api.log_user_actions([action], action["email"], user_group=self.group)
+            ok = self.sheets_api.log_user_actions(
+                [action], action["email"], user_group=self.group
+            )
             if ok:
                 self.db.mark_actions_synced([prev_id])
                 self.last_sync_time = datetime.now()
             else:
-                logger.warning("Sheets: log_user_actions вернул False — оставляю запись несинхронизированной")
+                logger.warning(
+                    "Sheets: log_user_actions вернул False — оставляю запись несинхронизированной"
+                )
         except Exception as e:
             logger.warning(f"Ошибка отправки завершённого статуса в Sheets: {e}")
-            Notifier.show("Оффлайн режим", "Предыдущий статус будет синхронизирован позже.")
+            Notifier.show(
+                "Оффлайн режим", "Предыдущий статус будет синхронизирован позже."
+            )
 
     def _init_db(self):
         try:
@@ -166,7 +194,7 @@ class EmployeeApp(QWidget):
                 has_session = bool(self._continue_existing_session)
                 action_type = "STATUS_CHANGE" if has_session else "LOGIN"
                 comment = "Начало смены" if action_type == "LOGIN" else "Смена статуса"
-                
+
                 # Используем сериализованную транзакцию для записи
                 with write_tx() as conn:
                     record_id = self.db.log_action_tx(
@@ -179,13 +207,15 @@ class EmployeeApp(QWidget):
                         session_id=self.session_id,
                         status_start_time=now,
                         status_end_time=None,
-                        reason=None
+                        reason=None,
                     )
                 self.status_start_time = datetime.fromisoformat(now)
                 self._send_action_to_sheets(record_id)
         except LocalDBError as e:
             logger.error(f"Ошибка инициализации БД: {e}")
-            QMessageBox.critical(self, "Ошибка", "Не удалось инициализировать локальную базу данных")
+            QMessageBox.critical(
+                self, "Ошибка", "Не удалось инициализировать локальную базу данных"
+            )
             raise
 
     def _init_ui(self):
@@ -213,14 +243,18 @@ class EmployeeApp(QWidget):
         main_layout.addLayout(header_layout)
 
         self.info_label = QLabel()
-        self.info_label.setStyleSheet("QLabel { background-color: #f5f5f5; border-radius: 5px; padding: 10px; }")
+        self.info_label.setStyleSheet(
+            "QLabel { background-color: #f5f5f5; border-radius: 5px; padding: 10px; }"
+        )
         self._update_info_text()
         main_layout.addWidget(self.info_label)
 
         self.comment_input = QTextEdit()
         self.comment_input.setPlaceholderText("Введите комментарий...")
         self.comment_input.setMaximumHeight(80)
-        self.comment_input.setStyleSheet("QTextEdit { border: 1px solid #ddd; border-radius: 5px; padding: 5px; }")
+        self.comment_input.setStyleSheet(
+            "QTextEdit { border: 1px solid #ddd; border-radius: 5px; padding: 5px; }"
+        )
         main_layout.addWidget(self.comment_input)
 
         self.time_label = QLabel("⏱ Время в статусе: 00:00:00")
@@ -245,7 +279,8 @@ class EmployeeApp(QWidget):
             main_layout.addLayout(btn_layout)
 
         self.finish_btn = QPushButton("Завершить смену")
-        self.finish_btn.setStyleSheet("""
+        self.finish_btn.setStyleSheet(
+            """
             QPushButton {
                 padding: 10px;
                 border-radius: 5px;
@@ -256,7 +291,8 @@ class EmployeeApp(QWidget):
             QPushButton:hover {
                 background-color: #d32f2f;
             }
-        """)
+        """
+        )
         self.finish_btn.clicked.connect(self.finish_shift)
         main_layout.addWidget(self.finish_btn)
 
@@ -286,7 +322,9 @@ class EmployeeApp(QWidget):
             row = self.sheets_api.check_user_session_status(self.email, self.session_id)
             if isinstance(row, dict):
                 st = (row.get("Status") or "").strip().lower()
-                logger.debug(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")
+                logger.debug(
+                    f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}"
+                )
                 return st in ("finished", "kicked")
         except Exception as e:
             logger.debug(f"_is_session_finished_remote error: {e}")
@@ -302,20 +340,26 @@ class EmployeeApp(QWidget):
             self.finish_btn.setEnabled(False)
             for btn in self.status_buttons.values():
                 btn.setEnabled(False)
-            Notifier.show("WorkLog", "Смена завершена (автоматически, по данным системы).")
+            Notifier.show(
+                "WorkLog", "Смена завершена (автоматически, по данным системы)."
+            )
             logger.info(f"[AUTO_LOGOUT_DETECT] Локально найден LOGOUT для {self.email}")
             return
 
         # 2) удалённая проверка ActiveSessions
         if self._is_session_finished_remote():
-            logger.info(f"[AUTO_LOGOUT_DETECT] В ActiveSessions статус НЕ active для {self.email}, session={self.session_id}")
+            logger.info(
+                f"[AUTO_LOGOUT_DETECT] В ActiveSessions статус НЕ active для {self.email}, session={self.session_id}"
+            )
             self._closing_reason = "auto_logout"
             self.finish_btn.setEnabled(False)
             for btn in self.status_buttons.values():
                 btn.setEnabled(False)
             Notifier.show("WorkLog", "Смена завершена администратором.")
             try:
-                self._log_shift_end("Разлогинен администратором (удалённо)", reason="admin")
+                self._log_shift_end(
+                    "Разлогинен администратором (удалённо)", reason="admin"
+                )
             except Exception as e:
                 logger.error(f"Ошибка при автологаутах по сигналу из Sheets: {e}")
             self.shift_ended = True
@@ -330,7 +374,7 @@ class EmployeeApp(QWidget):
             QMessageBox.warning(
                 self,
                 "Отключение",
-                "Вы были отключены администратором. Сессия будет завершена."
+                "Вы были отключены администратором. Сессия будет завершена.",
             )
         except Exception:
             pass
@@ -358,7 +402,8 @@ class EmployeeApp(QWidget):
     def _update_button_states(self):
         for status, btn in self.status_buttons.items():
             if status == self.current_status:
-                btn.setStyleSheet("""
+                btn.setStyleSheet(
+                    """
                     QPushButton {
                         padding: 8px;
                         border-radius: 5px;
@@ -369,10 +414,12 @@ class EmployeeApp(QWidget):
                     QPushButton:hover {
                         background-color: #a1e6a1;
                     }
-                """)
+                """
+                )
                 btn.setEnabled(False)
             else:
-                btn.setStyleSheet("""
+                btn.setStyleSheet(
+                    """
                     QPushButton {
                         padding: 8px;
                         border-radius: 5px;
@@ -381,7 +428,8 @@ class EmployeeApp(QWidget):
                     QPushButton:hover {
                         background-color: #d0d0d0;
                     }
-                """)
+                """
+                )
                 btn.setEnabled(True)
             if self.shift_ended:
                 btn.setEnabled(False)
@@ -390,7 +438,9 @@ class EmployeeApp(QWidget):
         time_in_status = datetime.now() - self.status_start_time
         hours, remainder = divmod(time_in_status.seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
-        self.time_label.setText(f"⏱ Время в статусе: {hours:02d}:{minutes:02d}:{seconds:02d}")
+        self.time_label.setText(
+            f"⏱ Время в статусе: {hours:02d}:{minutes:02d}:{seconds:02d}"
+        )
 
         shift_time = datetime.now() - self.shift_start_time
         h, rem = divmod(shift_time.seconds, 3600)
@@ -416,7 +466,9 @@ class EmployeeApp(QWidget):
             return
 
         if new_status == self.current_status:
-            QMessageBox.information(self, "Информация", "Вы уже находитесь в этом статусе")
+            QMessageBox.information(
+                self, "Информация", "Вы уже находитесь в этом статусе"
+            )
             return
 
         comment = self.comment_input.toPlainText().strip()
@@ -424,7 +476,7 @@ class EmployeeApp(QWidget):
             QMessageBox.warning(
                 self,
                 "Ошибка",
-                f"Комментарий слишком длинный (максимум {MAX_COMMENT_LENGTH} символов)"
+                f"Комментарий слишком длинный (максимум {MAX_COMMENT_LENGTH} символов)",
             )
             return
 
@@ -446,7 +498,7 @@ class EmployeeApp(QWidget):
                     session_id=self.session_id,
                     status_start_time=now,
                     status_end_time=None,
-                    reason=None
+                    reason=None,
                 )
             self._send_action_to_sheets(record_id)
         except Exception as e:
@@ -478,7 +530,7 @@ class EmployeeApp(QWidget):
                     session_id=self.session_id,
                     status_start_time=now,
                     status_end_time=now,
-                    reason=reason
+                    reason=reason,
                 )
             self._send_action_to_sheets(record_id, user_group=self.group)
         except Exception as e:
@@ -496,7 +548,7 @@ class EmployeeApp(QWidget):
 
         try:
             self._log_shift_end(comment)
-        except Exception as e:
+        except Exception:
             QMessageBox.critical(self, "Ошибка", "Не удалось завершить смену")
             return
 
@@ -509,30 +561,53 @@ class EmployeeApp(QWidget):
         try:
             lt = datetime.now().isoformat()
             ok = self.sheets_api.finish_active_session(self.email, self.session_id, lt)
-            logger.info(f"[LOGOUT/ActiveSessions] finish_active_session({self.email}, {self.session_id}) -> {ok}")
+            logger.info(
+                f"[LOGOUT/ActiveSessions] finish_active_session({self.email}, {self.session_id}) -> {ok}"
+            )
             if not ok:
                 # Фоллбэк: обновим ПОСЛЕДНЮЮ активную строку по email (если есть) как 'finished'
                 try:
                     # Универсальный путь через _update_session_status если доступен
                     if hasattr(self.sheets_api, "_update_session_status"):
-                        ok2 = self.sheets_api._update_session_status(self.email, self.session_id, "finished", lt)
-                        logger.warning(f"[LOGOUT/ActiveSessions] fallback _update_session_status -> {ok2}")
+                        ok2 = self.sheets_api._update_session_status(
+                            self.email, self.session_id, "finished", lt
+                        )
+                        logger.warning(
+                            f"[LOGOUT/ActiveSessions] fallback _update_session_status -> {ok2}"
+                        )
                         ok = ok or ok2
                     else:
-                        ok2 = self.sheets_api.kick_active_session(self.email, self.session_id, lt)  # меняет статус, но приемлемо
-                        logger.warning(f"[LOGOUT/ActiveSessions] fallback kick_active_session -> {ok2}")
+                        ok2 = self.sheets_api.kick_active_session(
+                            self.email, self.session_id, lt
+                        )  # меняет статус, но приемлемо
+                        logger.warning(
+                            f"[LOGOUT/ActiveSessions] fallback kick_active_session -> {ok2}"
+                        )
                         ok = ok or ok2
                 except Exception as e2:
                     logger.error(f"[LOGOUT/ActiveSessions] fallback error: {e2}")
 
             # Верификация статуса
             try:
-                st = (self.sheets_api.check_user_session_status(self.email, self.session_id) or "").strip().lower()
+                st = (
+                    (
+                        self.sheets_api.check_user_session_status(
+                            self.email, self.session_id
+                        )
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                )
                 logger.info(f"[LOGOUT/ActiveSessions] post-check status: {st}")
                 if st == "active":
                     # одна повторная попытка
-                    ok3 = self.sheets_api.finish_active_session(self.email, self.session_id, lt)
-                    logger.warning(f"[LOGOUT/ActiveSessions] repeat finish_active_session -> {ok3}")
+                    ok3 = self.sheets_api.finish_active_session(
+                        self.email, self.session_id, lt
+                    )
+                    logger.warning(
+                        f"[LOGOUT/ActiveSessions] repeat finish_active_session -> {ok3}"
+                    )
             except Exception as e3:
                 logger.warning(f"[LOGOUT/ActiveSessions] status verify error: {e3}")
         except Exception as e:
@@ -548,7 +623,7 @@ class EmployeeApp(QWidget):
                 "Подтверждение",
                 "Вы уверены, что хотите закрыть приложение? Смена не завершена.",
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply == QMessageBox.No:
                 event.ignore()
@@ -562,6 +637,7 @@ class EmployeeApp(QWidget):
                 self.on_logout_callback()
         super().closeEvent(event)
 
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = EmployeeApp(
@@ -569,7 +645,7 @@ if __name__ == "__main__":
         name="Тестовый Сотрудник",
         role="специалист",
         group="Тестовая группа",
-        on_logout_callback=lambda reason: print(f"Logout reason: {reason}")
+        on_logout_callback=lambda reason: print(f"Logout reason: {reason}"),
     )
     window.show()
     sys.exit(app.exec())

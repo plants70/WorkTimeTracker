@@ -4,29 +4,45 @@ from __future__ import annotations
 import sys
 import logging
 import time
-from pathlib import Path
-from typing import Optional, Dict, List, Tuple
 
-from PyQt5.QtCore import Qt, QMetaObject, pyqtSlot, Q_ARG, QThread, QObject, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, pyqtSlot, QThread, QObject, pyqtSignal, QTimer
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QTableWidget, QTableWidgetItem, QCheckBox, QComboBox, QMessageBox,
-    QTabWidget, QGroupBox, QDialog, QToolBar, QAction
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QCheckBox,
+    QComboBox,
+    QMessageBox,
+    QTabWidget,
+    QGroupBox,
+    QDialog,
+    QToolBar,
+    QAction,
 )
 
 # --- Единое логирование для админки ---
 from logging_setup import setup_logging
 from config import LOG_DIR
-
-# --- Доменная логика/репозиторий ---
 from admin_app.repo import AdminRepo
-
-# --- Панель оповещений ---
 from admin_app.notifications_panel import open_panel as open_notifications_panel
+
+logger = logging.getLogger(__name__)
 
 # =================== Константы UI ===================
 FIELDS = ["Email", "Name", "Phone", "Role", "Telegram", "Group", "NotifyTelegram"]
-ROLES = ["специалист", "старший специалист", "ведущий специалист", "руководитель группы"]
+ROLES = [
+    "специалист",
+    "старший специалист",
+    "ведущий специалист",
+    "руководитель группы",
+]
 
 # Загрузка GROUP_MAPPING с обработкой ошибок
 try:
@@ -36,10 +52,12 @@ except Exception:
     GROUP_MAPPING = {}
 
 # =================== Диалог редактирования пользователя ===================
-from PyQt5.QtWidgets import QDialog
+
 
 class UserDialog(QDialog):
-    def __init__(self, parent=None, user: Optional[Dict[str, str]] = None, groups: List[str] = None):
+    def __init__(
+        self, parent=None, user: dict[str, str] | None = None, groups: list[str] = None
+    ):
         super().__init__(parent)
         self.setWindowTitle("Карточка сотрудника")
         self.user = user or {}
@@ -55,7 +73,9 @@ class UserDialog(QDialog):
         self.tg_input = QLineEdit(str(self.user.get("Telegram", "")))
         # chat_id заполняется ботом, руками редактировать рискованно
         self.tg_input.setReadOnly(True)
-        self.tg_input.setPlaceholderText("Заполняется автоматически при привязке через Telegram-бота")
+        self.tg_input.setPlaceholderText(
+            "Заполняется автоматически при привязке через Telegram-бота"
+        )
 
         self.role_combo = QComboBox()
         self.role_combo.addItems(ROLES)
@@ -96,7 +116,7 @@ class UserDialog(QDialog):
         btns.addWidget(btn_cancel)
         layout.addLayout(btns)
 
-    def get_user(self) -> Dict[str, str]:
+    def get_user(self) -> dict[str, str]:
         return {
             "Email": self.email_input.text().strip().lower(),
             "Name": self.fio_input.text().strip(),
@@ -107,14 +127,16 @@ class UserDialog(QDialog):
             "NotifyTelegram": "Yes" if self.tg_notify_chk.isChecked() else "No",
         }
 
+
 # =================== Главное окно ===================
 
+
 class AdminWindow(QMainWindow):
-    def __init__(self, groups: List[str]):
+    def __init__(self, groups: list[str]):
         super().__init__()
         self.setWindowTitle("Админка WorkTimeTracker")
         self.resize(1400, 780)
-        
+
         # Группы
         self.groups = groups
 
@@ -122,12 +144,12 @@ class AdminWindow(QMainWindow):
         self.repo = AdminRepo()
 
         # Кэш пользователей и активных e-mail
-        self.users: List[Dict[str, str]] = []
-        self._active_cache: Tuple[float, set[str]] = (0.0, set())  # (ts, {emails})
+        self.users: list[dict[str, str]] = []
+        self._active_cache: tuple[float, set[str]] = (0.0, set())  # (ts, {emails})
         self._active_ttl_sec = 30.0
 
         self._build_ui()
-        
+
         # Инициализируем загрузку списка пользователей в фоне
         self._load_users_async()
         self.load_shift_calendar()
@@ -143,7 +165,7 @@ class AdminWindow(QMainWindow):
         # Создаем тулбар с кнопками
         toolbar = QToolBar("Main Toolbar")
         self.addToolBar(toolbar)
-        
+
         # Кнопка "Оповещения"
         btn_notifications = QAction("Оповещения", self)
         btn_notifications.triggered.connect(lambda: open_notifications_panel(self))
@@ -194,7 +216,15 @@ class AdminWindow(QMainWindow):
         # Таблица пользователей
         self.users_table = QTableWidget(0, len(FIELDS))
         self.users_table.setHorizontalHeaderLabels(
-            ["Email", "ФИО", "Телефон", "Должность", "Telegram", "Группа", "Telegram уведомления"]
+            [
+                "Email",
+                "ФИО",
+                "Телефон",
+                "Должность",
+                "Telegram",
+                "Группа",
+                "Telegram уведомления",
+            ]
         )
         self.users_table.setSelectionBehavior(QTableWidget.SelectRows)
         users_layout.addWidget(self.users_table)
@@ -209,7 +239,9 @@ class AdminWindow(QMainWindow):
         header_layout.addWidget(QLabel("Сотрудник:"))
         self.schedule_user_combo = QComboBox()
         self.schedule_user_combo.addItem("Выберите сотрудника")
-        self.schedule_user_combo.currentIndexChanged.connect(self.on_schedule_user_change)
+        self.schedule_user_combo.currentIndexChanged.connect(
+            self.on_schedule_user_change
+        )
         header_layout.addWidget(self.schedule_user_combo)
         header_layout.addStretch()
         schedule_layout.addLayout(header_layout)
@@ -246,7 +278,7 @@ class AdminWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
     # ---------- Helpers ----------
-    def _selected_email(self) -> Optional[str]:
+    def _selected_email(self) -> str | None:
         items = self.users_table.selectedItems()
         if not items:
             return None
@@ -254,7 +286,16 @@ class AdminWindow(QMainWindow):
         return val[2:] if val.startswith("🟢 ") else val
 
     def _confirm(self, msg: str) -> bool:
-        return QMessageBox.question(self, "Подтверждение", msg, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+        return (
+            QMessageBox.question(
+                self,
+                "Подтверждение",
+                msg,
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            == QMessageBox.Yes
+        )
 
     def _info(self, msg: str):
         QMessageBox.information(self, "Информация", msg)
@@ -269,7 +310,11 @@ class AdminWindow(QMainWindow):
             return emails
         try:
             sessions = self.repo.get_active_sessions()
-            emails = {str(s.get("Email", "")).strip().lower() for s in sessions if str(s.get("Status", "")).strip().lower() == "active"}
+            emails = {
+                str(s.get("Email", "")).strip().lower()
+                for s in sessions
+                if str(s.get("Status", "")).strip().lower() == "active"
+            }
             self._active_cache = (time.monotonic(), emails)
             return emails
         except Exception as e:
@@ -280,8 +325,11 @@ class AdminWindow(QMainWindow):
         """Обновить кэш активных пользователей и при необходимости перерисовать таблицу."""
         try:
             sessions = self.repo.get_active_sessions()
-            emails = {str(s.get("Email", "")).strip().lower()
-                      for s in sessions if str(s.get("Status","")).strip().lower() == "active"}
+            emails = {
+                str(s.get("Email", "")).strip().lower()
+                for s in sessions
+                if str(s.get("Status", "")).strip().lower() == "active"
+            }
             self._active_cache = (time.monotonic(), emails)
             if self.only_active_chk.isChecked():
                 self.apply_user_search()
@@ -314,10 +362,14 @@ class AdminWindow(QMainWindow):
     def _on_users_loaded(self, users: list):
         self.statusBar().clearMessage()
         self._set_ui_enabled(True)
-        
+
         if not users:
-            QMessageBox.critical(self, "Ошибка", "Не удалось загрузить список пользователей (проверьте подключение).")
-        
+            QMessageBox.critical(
+                self,
+                "Ошибка",
+                "Не удалось загрузить список пользователей (проверьте подключение).",
+            )
+
         self.users = users or []
         self.apply_user_search()
 
@@ -337,7 +389,7 @@ class AdminWindow(QMainWindow):
         self.group_filter_combo.setEnabled(enabled)
         self.only_active_chk.setEnabled(enabled)
         self.users_table.setEnabled(enabled)
-        
+
         # Находим кнопки в layout
         for i in range(self.tab_users.layout().count()):
             item = self.tab_users.layout().itemAt(i)
@@ -456,8 +508,8 @@ class AdminWindow(QMainWindow):
             logger.exception("Ошибка при загрузке графика: %s", e)
             data = []
 
-        self.shift_calendar_data: List[List[str]] = data
-        self.shift_headers: List[str] = data[0] if data else []
+        self.shift_calendar_data: list[list[str]] = data
+        self.shift_headers: list[str] = data[0] if data else []
 
         if not data:
             self.info_label.setText("Лист графика не найден или пуст.")
@@ -501,7 +553,7 @@ class AdminWindow(QMainWindow):
 
         # табель по дням (ищем первые числовые заголовки как дни месяца)
         headers = self.shift_headers
-        row_for_user: Optional[List[str]] = None
+        row_for_user: list[str] | None = None
         for r in self.shift_calendar_data[1:]:
             if r and r[0].strip() == fio:
                 row_for_user = r
@@ -538,7 +590,9 @@ class AdminWindow(QMainWindow):
         else:
             self._warn("Активная сессия не найдена")
 
+
 # =================== Вспомогательные функции ===================
+
 
 def get_available_groups(repo: AdminRepo) -> list[str]:
     """Получение списка доступных групп"""
@@ -546,39 +600,47 @@ def get_available_groups(repo: AdminRepo) -> list[str]:
         return sorted(set(GROUP_MAPPING.values()))
     return repo.list_groups_from_sheet()
 
+
 # =================== Entrypoint ===================
+
 
 def main():
     # Единое логирование для админки
     log_path = setup_logging(app_name="wtt-admin", log_dir=LOG_DIR)
     logger = logging.getLogger(__name__)
     logger.info("Admin app logging initialized (path=%s)", log_path)
-    
+
     # Получение списка групп
     repo = AdminRepo()
     groups = get_available_groups(repo)
     logger.info("Groups: %s", ", ".join(groups) if groups else "<none>")
-    
+
     # Запуск GUI с передачей списка групп
     app = QApplication(sys.argv)
     win = AdminWindow(groups=groups)
     win.show()
     sys.exit(app.exec_())
 
+
 # ----------------- Фоновый воркер для загрузки пользователей -----------------
 class _ListUsersWorker(QObject):
     finished = pyqtSignal(list)
+
     def __init__(self, repo: AdminRepo):
         super().__init__()
         self.repo = repo
+
     def run(self):
         try:
             users = self.repo.list_users()
         except Exception as e:
-            logging.getLogger(__name__).exception("Ошибка при загрузке пользователей: %s", e)
+            logging.getLogger(__name__).exception(
+                "Ошибка при загрузке пользователей: %s", e
+            )
             users = []
         # вернёмся в GUI-поток через сигнал
         self.finished.emit(users)
+
 
 if __name__ == "__main__":
     main()
