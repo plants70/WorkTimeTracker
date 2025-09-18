@@ -1,0 +1,11 @@
+# === Core Google Sheets stack ===
+gspread>=6.0.0
+google-auth>=2.28.0
+requests>=2.31.0
+
+# === Desktop UI ===
+PyQt5>=5.15.11
+
+# === Config & secrets ===
+python-dotenv>=1.0.1
+pyzipper>=0.3.6

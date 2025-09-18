@@ -1,0 +1,489 @@
+{
+  "ts": "2025-09-17T17:45:58",
+  "log_dir": "C:\\Users\\Сергей\\AppData\\Roaming\\WorkTimeTracker\\logs",
+  "credentials_file": "C:\\Temp\\wtt_creds\\service_account.json",
+  "sqlite": {
+    "objects": [
+      {
+        "name": "app_logs",
+        "type": "table",
+        "sql": "CREATE TABLE app_logs (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                ts TEXT NOT NULL,\n                level TEXT NOT NULL,\n                message TEXT NOT NULL\n            )"
+      },
+      {
+        "name": "app_logs_legacy_20250826175446",
+        "type": "table",
+        "sql": "CREATE TABLE \"app_logs_legacy_20250826175446\" (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                ts TEXT NOT NULL,\n                level TEXT NOT NULL,\n                message TEXT NOT NULL\n            )"
+      },
+      {
+        "name": "check_comment_length",
+        "type": "trigger",
+        "sql": "CREATE TRIGGER check_comment_length\n            BEFORE INSERT ON logs\n            FOR EACH ROW\n            WHEN length(NEW.comment) > 500\n            BEGIN\n                SELECT RAISE(ABORT, 'Comment too long');\n            END"
+      },
+      {
+        "name": "idx_app_logs_ts",
+        "type": "index",
+        "sql": "CREATE INDEX idx_app_logs_ts ON app_logs(ts)"
+      },
+      {
+        "name": "idx_logs_action_type",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_action_type ON logs(action_type)"
+      },
+      {
+        "name": "idx_logs_email",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_email ON logs(email)"
+      },
+      {
+        "name": "idx_logs_email_session_end",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_email_session_end ON logs(email, session_id, status_end_time)"
+      },
+      {
+        "name": "idx_logs_session",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_session ON logs(session_id)"
+      },
+      {
+        "name": "idx_logs_synced",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_synced ON logs(synced)"
+      },
+      {
+        "name": "idx_logs_synced_priority_id",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_synced_priority_id ON logs(synced, priority, id)"
+      },
+      {
+        "name": "idx_logs_timestamp",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_timestamp ON logs(timestamp)"
+      },
+      {
+        "name": "idx_logs_ts",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_ts ON \"app_logs_legacy_20250826175446\"(ts)"
+      },
+      {
+        "name": "idx_offline_actions_status_ts",
+        "type": "index",
+        "sql": "CREATE INDEX idx_offline_actions_status_ts ON offline_actions(status, ts)"
+      },
+      {
+        "name": "idx_status_events_email_ts",
+        "type": "index",
+        "sql": "CREATE INDEX idx_status_events_email_ts ON status_events(email, ts_utc)"
+      },
+      {
+        "name": "logs",
+        "type": "table",
+        "sql": "CREATE TABLE logs (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                session_id TEXT NOT NULL,\n                email TEXT NOT NULL,\n                name TEXT NOT NULL,\n                status TEXT,\n                action_type TEXT NOT NULL,\n                comment TEXT,\n                timestamp TEXT NOT NULL,\n                synced INTEGER DEFAULT 0,\n                sync_attempts INTEGER DEFAULT 0,\n                last_sync_attempt TEXT,\n                priority INTEGER DEFAULT 1,\n                status_start_time TEXT,\n                status_end_time TEXT,\n                reason TEXT,\n                user_group TEXT\n            )"
+      },
+      {
+        "name": "offline_actions",
+        "type": "table",
+        "sql": "CREATE TABLE offline_actions (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                ts TEXT NOT NULL,\n                action_type TEXT NOT NULL,\n                payload TEXT NOT NULL,  -- JSON-строка\n                status TEXT NOT NULL DEFAULT 'pending'  -- pending|synced|failed\n            )"
+      },
+      {
+        "name": "prevent_duplicate_logout",
+        "type": "trigger",
+        "sql": "CREATE TRIGGER prevent_duplicate_logout\n            BEFORE INSERT ON logs\n            FOR EACH ROW\n            WHEN LOWER(NEW.action_type) = 'logout' AND EXISTS (\n                SELECT 1 FROM logs\n                WHERE session_id = NEW.session_id\n                  AND LOWER(action_type) = 'logout'\n                  AND timestamp > datetime('now', '-5 minutes')\n            )\n            BEGIN\n                SELECT RAISE(ABORT, 'Duplicate LOGOUT action');\n            END"
+      },
+      {
+        "name": "rule_last_sent",
+        "type": "table",
+        "sql": "CREATE TABLE rule_last_sent (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    rule_id INTEGER NOT NULL,\n    email TEXT,\n    context TEXT,\n    last_sent_utc TEXT NOT NULL,\n    UNIQUE(rule_id, email, context)\n)"
+      },
+      {
+        "name": "sqlite_autoindex_rule_last_sent_1",
+        "type": "index",
+        "sql": null
+      },
+      {
+        "name": "sqlite_autoindex_users_cache_1",
+        "type": "index",
+        "sql": null
+      },
+      {
+        "name": "sqlite_sequence",
+        "type": "table",
+        "sql": "CREATE TABLE sqlite_sequence(name,seq)"
+      },
+      {
+        "name": "status_events",
+        "type": "table",
+        "sql": "CREATE TABLE status_events (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    email TEXT NOT NULL,\n    status TEXT NOT NULL,\n    ts_utc TEXT NOT NULL\n)"
+      },
+      {
+        "name": "users_cache",
+        "type": "table",
+        "sql": "CREATE TABLE users_cache (\n                email TEXT PRIMARY KEY,\n                name TEXT,\n                role TEXT,\n                \"group\" TEXT,\n                shift_hours TEXT,\n                telegram_login TEXT,\n                updated_at TEXT\n            )"
+      }
+    ],
+    "stats": {
+      "app_logs": 0,
+      "app_logs_legacy_20250826175446": 0,
+      "logs": 139,
+      "offline_actions": 0,
+      "rule_last_sent": 0,
+      "status_events": 31,
+      "users_cache": 2
+    },
+    "samples": {
+      "app_logs": [],
+      "app_logs_legacy_20250826175446": [],
+      "logs": [
+        [
+          139,
+          "04@ya.ru_20250917174343",
+          "04@ya.ru",
+          "тест почта1",
+          "Чат",
+          "STATUS_CHANGE",
+          "Смена статуса",
+          "2025-09-17T14:43:53.315727+00:00",
+          1,
+          1,
+          "2025-09-17T14:43:59.783482+00:00",
+          1,
+          "2025-09-17T17:43:53.315202",
+          null,
+          null,
+          null
+        ],
+        [
+          138,
+          "04@ya.ru_20250917174343",
+          "04@ya.ru",
+          "тест почта1",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-09-17T14:43:43.324363+00:00",
+          1,
+          2,
+          "2025-09-17T14:43:58.293338+00:00",
+          1,
+          "2025-09-17T17:43:43.323970",
+          "2025-09-17T14:43:53.313286+00:00",
+          null,
+          null
+        ],
+        [
+          137,
+          "04@ya.ru_20250917171042",
+          "04@ya.ru",
+          "тест почта1",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-09-17T14:10:42.466340+00:00",
+          1,
+          1,
+          "2025-09-17T14:43:35.828491+00:00",
+          1,
+          "2025-09-17T17:10:42.466141",
+          null,
+          null,
+          null
+        ],
+        [
+          136,
+          "04@ya.ru_20250917160543",
+          "04@ya.ru",
+          "тест почта1",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-09-17T13:05:43.480286+00:00",
+          1,
+          1,
+          "2025-09-17T14:43:35.828491+00:00",
+          1,
+          "2025-09-17T16:05:43.480020",
+          null,
+          null,
+          null
+        ],
+        [
+          135,
+          "04@ya.ru_20250917153550",
+          "04@ya.ru",
+          "тест почта1",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-09-17T12:35:50.977374+00:00",
+          1,
+          1,
+          "2025-09-17T14:43:35.828491+00:00",
+          1,
+          "2025-09-17T15:35:50.963902",
+          null,
+          null,
+          null
+        ]
+      ],
+      "offline_actions": [],
+      "rule_last_sent": [],
+      "status_events": [
+        [
+          31,
+          "10@ya.ru",
+          "Перерыв",
+          "2025-09-04T14:36:05+00:00"
+        ],
+        [
+          30,
+          "10@ya.ru",
+          "В работе",
+          "2025-09-04T14:36:01+00:00"
+        ],
+        [
+          29,
+          "10@ya.ru",
+          "Перерыв",
+          "2025-09-04T14:34:19+00:00"
+        ],
+        [
+          28,
+          "10@ya.ru",
+          "В работе",
+          "2025-09-04T14:34:14+00:00"
+        ],
+        [
+          27,
+          "10@ya.ru",
+          "Перерыв",
+          "2025-09-04T13:49:44+00:00"
+        ]
+      ],
+      "users_cache": [
+        [
+          "04@ya.ru",
+          "тест почта1",
+          "специалист",
+          "Почта",
+          "8 часов",
+          "",
+          "2025-09-17 14:43:31"
+        ],
+        [
+          "02@ya.ru",
+          "тест запись 1",
+          "специалист",
+          "Запись",
+          "8 часов",
+          "",
+          "2025-09-17 07:48:14"
+        ]
+      ]
+    },
+    "extra": {
+      "logs_unsynced": 0,
+      "offline_actions_pending": 0
+    }
+  },
+  "sheets": {
+    "worksheets": [
+      {
+        "title": "Admins",
+        "header": [
+          "Login",
+          "Password"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 26
+      },
+      {
+        "title": "Users",
+        "header": [
+          "Email",
+          "Name",
+          "Phone",
+          "Role",
+          "Telegram",
+          "ShiftHours",
+          "Hours",
+          "NotifyTelegram",
+          "Group"
+        ],
+        "rows_hint": 997,
+        "cols_hint": 26
+      },
+      {
+        "title": "Groups",
+        "header": [
+          "Group",
+          "Sheet",
+          "Statuses",
+          "Возможные статусы: \"В работе\",\n    \"Чат\",\n    \"Аудио\",\n    \"Запись\",\n    \"Анкеты\",\n    \"Перерыв\",\n    \"Обед\",\n    \"ЦИТО\",\n    \"Обучение\" \nУказывать через запятую, без ковычек"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 18
+      },
+      {
+        "title": "WorkLog_Запись",
+        "header": [
+          "Timestamp",
+          "Email",
+          "Action",
+          "Status",
+          "Group",
+          "Start",
+          "End",
+          "Duration",
+          "SessionID",
+          "EventID",
+          "GroupAtStart"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 20
+      },
+      {
+        "title": "WorkLog_Входящие",
+        "header": [
+          "Timestamp",
+          "Email",
+          "Action",
+          "Status",
+          "Group",
+          "Start",
+          "End",
+          "Duration",
+          "SessionID",
+          "EventID",
+          "GroupAtStart"
+        ],
+        "rows_hint": 29,
+        "cols_hint": 20
+      },
+      {
+        "title": "ActiveSessions",
+        "header": [
+          "Email",
+          "Name",
+          "SessionID",
+          "LoginTime",
+          "Status",
+          "LogoutTime",
+          "RemoteCommand",
+          "LastHeartbeat",
+          "Reason"
+        ],
+        "rows_hint": 694,
+        "cols_hint": 24
+      },
+      {
+        "title": "WorkLog_Стоматология",
+        "header": [
+          "Timestamp",
+          "Email",
+          "Action",
+          "Status",
+          "Group",
+          "Start",
+          "End",
+          "Duration",
+          "SessionID",
+          "EventID",
+          "GroupAtStart"
+        ],
+        "rows_hint": 628,
+        "cols_hint": 20
+      },
+      {
+        "title": "WorkLog_Почта",
+        "header": [
+          "Timestamp",
+          "Email",
+          "Action",
+          "Status",
+          "Group",
+          "Start",
+          "End",
+          "Duration",
+          "SessionID",
+          "EventID",
+          "GroupAtStart"
+        ],
+        "rows_hint": 861,
+        "cols_hint": 20
+      },
+      {
+        "title": "AccessControl",
+        "header": [
+          "KeyType",
+          "KeyValue",
+          "AccessStatus",
+          "BlockUntil",
+          "Reason",
+          "UpdatedAt"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 26
+      },
+      {
+        "title": "NotificationsLog",
+        "header": [
+          "Ts",
+          "Kind",
+          "Target",
+          "Status",
+          "Preview",
+          "Error"
+        ],
+        "rows_hint": 2000,
+        "cols_hint": 6
+      },
+      {
+        "title": "NotificationRules",
+        "header": [
+          "ID",
+          "Enabled",
+          "Kind",
+          "Scope",
+          "GroupTag",
+          "Statuses",
+          "MinDurationMin",
+          "WindowMin",
+          "Limit",
+          "RateLimitSec",
+          "Silent",
+          "MessageTemplate"
+        ],
+        "rows_hint": 998,
+        "cols_hint": 13
+      },
+      {
+        "title": "WorkLog_General",
+        "header": [
+          "Timestamp",
+          "Email",
+          "Action",
+          "Status",
+          "Group",
+          "Start",
+          "End",
+          "Duration",
+          "SessionID",
+          "EventID",
+          "GroupAtStart",
+          "Reason",
+          "Comment",
+          "Name"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 14
+      }
+    ],
+    "expectations": [
+      {
+        "sheet": "ActiveSessions",
+        "missing_recommended": [
+          "RemoteCommandAck"
+        ]
+      }
+    ]
+  }
+}

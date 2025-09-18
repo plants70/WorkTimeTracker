@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# SQLite (локальные БД)
+*.db
+*.db-shm
+*.db-wal
+
+# Логи
+*.log
+logs/
+*.bak
+
+# Секреты и ключи
+.env
+secret_creds.zip
+
+# PyInstaller
+*.spec
+dist/
+build/
+*.exe
+*.dll
+
+# IDE/Editor
+.vscode/
+.idea/
+.DS_Store
+
+# GCP creds — запрещено хранить в репозитории
+credentials/*.json
+*.secret.json
+service_account.json

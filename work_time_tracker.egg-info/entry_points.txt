@@ -1,0 +1,8 @@
+[console_scripts]
+wtt-admin = admin_app.main_admin:main
+wtt-archive = tools.archive_cli:main
+wtt-doctor = tools.doctor:main
+wtt-send = tools.tg_send:main
+wtt-telebot = telegram_bot.main:main
+wtt-tg-env = tools.tg_envcheck:main
+wtt-user = user_app.main:main

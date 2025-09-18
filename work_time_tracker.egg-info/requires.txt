@@ -1,0 +1,7 @@
+PyQt5>=5.15
+gspread>=6.0.0
+google-auth>=2.0.0
+google-auth-oauthlib>=1.0.0
+requests>=2.31
+urllib3>=2.0
+python-dateutil>=2.9.0.post0
