@@ -3,18 +3,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import logging
-from pathlib import Path
+import sqlite3
 from datetime import datetime
-from typing import Dict, Any, List
+from pathlib import Path
+from typing import Any, Dict, List
 
 from config import LOG_DIR, get_credentials_file
-from user_app.db_local import LocalDB
 from logging_setup import setup_logging
-from sheets_api import get_sheets_api
-
 from notifications.rules_manager import RULES_SHEET
+from sheets_api import get_sheets_api
+from user_app.db_local import LocalDB
 
 # Минимальные ожидания под вашу фактическую схему:
 EXPECTED = {

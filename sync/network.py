@@ -1,7 +1,7 @@
 # sync/network.py
-import urllib.request
-import socket
 import logging
+import socket
+import urllib.request
 
 logger = logging.getLogger(__name__)
 

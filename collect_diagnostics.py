@@ -2,6 +2,7 @@
 # Сбор всего нужного для быстрой доработки и диагностики проекта в один текстовый файл.
 
 from __future__ import annotations
+
 import argparse
 import contextlib
 import hashlib

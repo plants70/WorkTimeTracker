@@ -8,12 +8,12 @@
 Запуск:
   python tools/audit_api_surface.py -r .
 """
-import ast
 import argparse
+import ast
 import inspect
 import os
 from pathlib import Path
-from typing import Dict, Set, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 PROJECT_EXTS = {".py"}
 

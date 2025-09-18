@@ -1,6 +1,7 @@
 import logging
-from sheets_api import get_sheets_api
+
 from config import DEFAULT_WORKLOG_GROUP, normalize_group_name
+from sheets_api import get_sheets_api
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 

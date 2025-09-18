@@ -1,21 +1,21 @@
 # telegram_bot/main.py
 from __future__ import annotations
+
 import logging
+import os
 import re
 import time
-import requests
-import os
 from typing import Optional
-from config import (
-    GOOGLE_SHEET_NAME,
-    USERS_SHEET,
-    TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN,
-)
-from sheets_api import SheetsAPI
+
+import requests
+
+from config import GOOGLE_SHEET_NAME, LOG_DIR
+from config import TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN
+from config import USERS_SHEET
 
 # --- Единое логирование для телеграм бота ---
 from logging_setup import setup_logging
-from config import LOG_DIR
+from sheets_api import SheetsAPI
 
 # Инициализация логирования
 log_path = setup_logging(app_name="wtt-telebot", log_dir=LOG_DIR)

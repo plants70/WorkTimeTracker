@@ -1,15 +1,15 @@
-import sys
 import logging
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Optional, Callable
+import sys
 import threading
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Callable, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import STATUS_GROUPS, MAX_COMMENT_LENGTH
-from sheets_api import get_sheets_api, SheetsAPIError
+from config import MAX_COMMENT_LENGTH, STATUS_GROUPS
+from sheets_api import SheetsAPIError, get_sheets_api
 from user_app.db_local import LocalDB, LocalDBError, write_tx
 
 try:
@@ -20,19 +20,19 @@ except ImportError:
     except ImportError:
         from notifications import Notifier
 
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QIcon, QPixmap
 from PyQt5.QtWidgets import (
-    QWidget,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QHBoxLayout,
-    QMessageBox,
-    QTextEdit,
-    QSizePolicy,
     QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt5.QtCore import QTimer, Qt, pyqtSignal
-from PyQt5.QtGui import QPixmap, QIcon
 
 logger = logging.getLogger(__name__)
 

@@ -1,13 +1,13 @@
-import sys
 import logging
-import time
 import signal
-from datetime import datetime
-from threading import Event, RLock, Thread, Lock
-from pathlib import Path
-from typing import Dict, List, Optional
 import socket
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from threading import Event, Lock, RLock, Thread
 from time import monotonic
+from typing import Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -36,15 +36,15 @@ except ImportError:
 
 try:
     from config import (
-        SYNC_INTERVAL,
         API_MAX_RETRIES,
         SYNC_BATCH_SIZE,
-        SYNC_RETRY_STRATEGY,
-        SYNC_INTERVAL_ONLINE,
+        SYNC_INTERVAL,
         SYNC_INTERVAL_OFFLINE_RECOVERY,
+        SYNC_INTERVAL_ONLINE,
+        SYNC_RETRY_STRATEGY,
     )
+    from sheets_api import SheetsAPIError, get_sheets_api
     from user_app.db_local import LocalDB
-    from sheets_api import get_sheets_api, SheetsAPIError
 
     # сохраняем прежнее имя переменной для кода ниже
     sheets_api = get_sheets_api()

@@ -1,22 +1,22 @@
 # telegram_bot/notifier.py
 from __future__ import annotations
-import logging
-import time
+
 import datetime as dt
-import requests
+import logging
 import os
+import time
+
+import requests
 
 # Импорты из config.py с обработкой исключений на случай отсутствия модуля
 try:
-    from config import (
-        GOOGLE_SHEET_NAME,
-        USERS_SHEET,
-        TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN,
-        TELEGRAM_ADMIN_CHAT_ID as CFG_TELEGRAM_ADMIN_CHAT_ID,
-        TELEGRAM_BROADCAST_CHAT_ID as CFG_TELEGRAM_BROADCAST_CHAT_ID,
-        TELEGRAM_MIN_INTERVAL_SEC as CFG_TELEGRAM_MIN_INTERVAL_SEC,
-        TELEGRAM_SILENT as CFG_TELEGRAM_SILENT,
-    )
+    from config import GOOGLE_SHEET_NAME
+    from config import TELEGRAM_ADMIN_CHAT_ID as CFG_TELEGRAM_ADMIN_CHAT_ID
+    from config import TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN
+    from config import TELEGRAM_BROADCAST_CHAT_ID as CFG_TELEGRAM_BROADCAST_CHAT_ID
+    from config import TELEGRAM_MIN_INTERVAL_SEC as CFG_TELEGRAM_MIN_INTERVAL_SEC
+    from config import TELEGRAM_SILENT as CFG_TELEGRAM_SILENT
+    from config import USERS_SHEET
 except ImportError:
     # Фолбэк значения если config.py не существует
     GOOGLE_SHEET_NAME = ""

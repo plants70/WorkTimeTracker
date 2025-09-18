@@ -1,20 +1,21 @@
 # sheets_api.py
-import gspread
-import time
+import datetime as dt
 import json
-import sys
+import logging
 import os
 import random
-import logging
-import datetime as dt
-from typing import Any
+import sys
+import threading
+import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+from uuid import uuid4
+from zoneinfo import ZoneInfo  # stdlib (Python 3.9+)
+
+import gspread
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.service_account import Credentials
-from dataclasses import dataclass
-import threading
-from zoneinfo import ZoneInfo  # stdlib (Python 3.9+)
-from uuid import uuid4
 
 logger = logging.getLogger(
     "sheets_api"
@@ -292,7 +293,7 @@ class SheetsAPI:
         return [list(row) for row in values]
 
     def _request_with_retry(self, func, *args, **kwargs):
-        from config import API_MAX_RETRIES, API_DELAY_SECONDS, GOOGLE_API_LIMITS
+        from config import API_DELAY_SECONDS, API_MAX_RETRIES, GOOGLE_API_LIMITS
 
         last_exc: Exception | None = None
         for attempt in range(API_MAX_RETRIES):
@@ -1001,7 +1002,9 @@ class SheetsAPI:
 
         try:
             event_id = event_id or str(uuid4())
-            timestamp_dt = self._as_utc_datetime(timestamp_utc) or dt.datetime.now(dt.UTC)
+            timestamp_dt = self._as_utc_datetime(timestamp_utc) or dt.datetime.now(
+                dt.UTC
+            )
             start_dt = self._as_utc_datetime(start_utc)
             end_dt = self._as_utc_datetime(end_utc)
 
@@ -1228,9 +1231,7 @@ class SheetsAPI:
 
     # ---------- utils ----------
 
-    def _as_utc_datetime(
-        self, value: dt.datetime | str | None
-    ) -> dt.datetime | None:
+    def _as_utc_datetime(self, value: dt.datetime | str | None) -> dt.datetime | None:
         """Преобразует ISO/локальную строку или datetime в UTC datetime."""
 
         if value is None:

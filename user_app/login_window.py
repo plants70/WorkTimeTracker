@@ -1,36 +1,37 @@
-import re
 import logging
+import re
 import sys
 from pathlib import Path
+
+from PyQt5.QtCore import QDateTime, Qt, pyqtSignal
+from PyQt5.QtGui import QFont, QIcon, QPixmap
 from PyQt5.QtWidgets import (
     QDialog,
-    QVBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QMessageBox,
-    QSpacerItem,
+    QPushButton,
     QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QDateTime
-from PyQt5.QtGui import QIcon, QPixmap, QFont
 
 try:
     from config import validate_config
     from sheets_api import get_sheets_api
-    from user_app.db_local import LocalDB
     from user_app import session as session_state
+    from user_app.db_local import LocalDB
 except ImportError:
     try:
         from roma.config import validate_config
         from roma.sheets_api import get_sheets_api
-        from roma.user_db_local import LocalDB
         from roma.user_app import session as session_state
+        from roma.user_db_local import LocalDB
     except ImportError:
         from config import validate_config
         from sheets_api import get_sheets_api
-        from user_app.db_local import LocalDB
         from user_app import session as session_state
+        from user_app.db_local import LocalDB
 
 logger = logging.getLogger(__name__)
 

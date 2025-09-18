@@ -1,8 +1,10 @@
 # sync/service_alerts.py
 from __future__ import annotations
+
 import logging
+
+from config import SERVICE_ALERT_MIN_SECONDS, SERVICE_ALERTS_ENABLED
 from telegram_bot.notifier import TelegramNotifier
-from config import SERVICE_ALERTS_ENABLED, SERVICE_ALERT_MIN_SECONDS
 
 log = logging.getLogger(__name__)
 

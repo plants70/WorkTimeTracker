@@ -1,14 +1,13 @@
 # user_app/personal_rules.py
 from __future__ import annotations
-import sqlite3
-import logging
-import datetime as dt
 
-from config import (
-    PERSONAL_RULES_ENABLED,
-    LOCAL_DB_PATH,  # путь к вашей локальной БД, как в user_app.db_local
-)
-from notifications.engine import record_status_event, long_status_check
+import datetime as dt
+import logging
+import sqlite3
+
+from config import LOCAL_DB_PATH  # путь к вашей локальной БД, как в user_app.db_local
+from config import PERSONAL_RULES_ENABLED
+from notifications.engine import long_status_check, record_status_event
 
 # Импортируем модуль для работы с общим подключением к БД
 from user_app import db_local

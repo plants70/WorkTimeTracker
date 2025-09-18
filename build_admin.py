@@ -1,8 +1,9 @@
 # build_admin.py
-import sys
 import logging
 import shutil
+import sys
 from pathlib import Path
+
 from PyInstaller.__main__ import run
 
 logging.basicConfig(

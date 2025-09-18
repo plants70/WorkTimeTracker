@@ -1,37 +1,38 @@
 # admin_app/main_admin.py
 from __future__ import annotations
 
-import sys
 import logging
+import sys
 import time
 
-from PyQt5.QtCore import Qt, pyqtSlot, QThread, QObject, pyqtSignal, QTimer
+from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (
+    QAction,
     QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMainWindow,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
-    QCheckBox,
-    QComboBox,
-    QMessageBox,
     QTabWidget,
-    QGroupBox,
-    QDialog,
     QToolBar,
-    QAction,
+    QVBoxLayout,
+    QWidget,
 )
+
+from admin_app.notifications_panel import open_panel as open_notifications_panel
+from admin_app.repo import AdminRepo
+from config import LOG_DIR
 
 # --- Единое логирование для админки ---
 from logging_setup import setup_logging
-from config import LOG_DIR
-from admin_app.repo import AdminRepo
-from admin_app.notifications_panel import open_panel as open_notifications_panel
 
 logger = logging.getLogger(__name__)
 

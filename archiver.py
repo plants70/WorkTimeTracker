@@ -1,18 +1,18 @@
 # archiver.py (reworked to use centralized SheetsAPI only)
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+import argparse
 import datetime as dt
 import logging
-import argparse
+import sys
+from pathlib import Path
 
 # Ensure project root is importable (so we can import config and sheets_api when run directly)
 ROOT_PATH = str(Path(__file__).parent.resolve())
 if ROOT_PATH not in sys.path:
     sys.path.insert(0, ROOT_PATH)
 
-from config import GOOGLE_SHEET_NAME, WORKLOG_SHEET, ARCHIVE_SHEET  # type: ignore
+from config import ARCHIVE_SHEET, GOOGLE_SHEET_NAME, WORKLOG_SHEET  # type: ignore
 from sheets_api import SheetsAPI, SheetsAPIError  # type: ignore
 
 logger = logging.getLogger(__name__)

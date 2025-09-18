@@ -1,14 +1,14 @@
 # user_app/db_local.py
 from __future__ import annotations
 
+import datetime as dt
+import logging
 import sqlite3
 import threading
 import time
-from pathlib import Path
-import datetime as dt
-from typing import Any
-import logging
 from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
 
 from config import LOCAL_DB_PATH, MAX_COMMENT_LENGTH, MAX_HISTORY_DAYS
 from user_app.db_migrations import apply_migrations

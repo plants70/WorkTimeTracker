@@ -1,26 +1,28 @@
 # user_app/main.py
-import sys
-import logging
-from pathlib import Path
-from typing import Dict, Any
-from PyQt5.QtWidgets import QApplication, QMessageBox
-from PyQt5.QtCore import QObject, pyqtSignal, QThread
-import traceback
 import atexit
+import logging
+import sys
+import traceback
+from pathlib import Path
+from typing import Any, Dict
+
+from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PyQt5.QtWidgets import QApplication, QMessageBox
 
 # Добавляем корень проекта в sys.path
 ROOT = Path(__file__).parent.parent.resolve()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Инициализация логирования через единый модуль
-from config import LOG_DIR, get_credentials_file, DB_MAIN_PATH, DB_FALLBACK_PATH
-from logging_setup import setup_logging
-from user_app.signals import SyncSignals
-from sheets_api import SheetsAPI  # Явный импорт класса SheetsAPI
 from auto_sync import SyncManager  # ← добавили
+
+# Инициализация логирования через единый модуль
+from config import DB_FALLBACK_PATH, DB_MAIN_PATH, LOG_DIR, get_credentials_file
+from logging_setup import setup_logging
 from notifications.engine import start_background_poller
+from sheets_api import SheetsAPI  # Явный импорт класса SheetsAPI
 from user_app import db_local  # ← добавили импорт
+from user_app.signals import SyncSignals
 
 atexit.register(db_local.close_connection)
 

@@ -1,19 +1,20 @@
 # config.py
-import os
-import sys
-import platform
-from pathlib import Path
-from contextlib import contextmanager
 import atexit
+import os
+import platform
+import sys
+from contextlib import contextmanager
+from pathlib import Path
 
 # ==================== Загрузка переменных окружения из .env ====================
 from dotenv import load_dotenv
 
 load_dotenv()
 
+import tempfile
+
 # ==================== Импорт для работы с зашифрованным credentials ====================
 import pyzipper
-import tempfile
 
 # ==================== Базовые настройки ====================
 if getattr(sys, "frozen", False):

@@ -1,7 +1,9 @@
 # tools/tg_send.py
 from __future__ import annotations
+
 import argparse
 import logging
+
 from telegram_bot.notifier import TelegramNotifier
 
 logging.basicConfig(level=logging.INFO)

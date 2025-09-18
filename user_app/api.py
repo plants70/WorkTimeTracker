@@ -1,8 +1,10 @@
 # user_app/api.py
 from __future__ import annotations
-from sheets_api import SheetsAPI, SheetsAPIError
+
 import datetime as dt
 import uuid
+
+from sheets_api import SheetsAPI, SheetsAPIError
 
 
 class UserNotFound(Exception):
