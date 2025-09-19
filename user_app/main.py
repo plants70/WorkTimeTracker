@@ -50,6 +50,10 @@ def main() -> None:
         sys.excepthook = _handle_uncaught
 
         controller = AppController(services)
+        try:
+            services.warmup_async()
+        except Exception:  # pragma: no cover - warmup errors are non fatal
+            logging.getLogger(__name__).debug("Warmup scheduling failed", exc_info=True)
         controller.start()
 
         exit_code = app.exec_()

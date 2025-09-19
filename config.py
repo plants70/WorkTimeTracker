@@ -41,6 +41,17 @@ def _read_env_bool(var_name: str, default: bool = False) -> bool:
 
 DEBUG_IDS: bool = _read_env_bool("DEBUG_IDS", False)
 
+
+def _read_env_float(var_name: str, default: float) -> float:
+    value = os.getenv(var_name)
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 # ==================== Импорт для работы с зашифрованным credentials ====================
 import pyzipper
 
@@ -197,6 +208,29 @@ WORKLOG_HEADERS = [
     "EventID",
     "GroupAtStart",
 ]
+
+# WorkLog сортировки (перестановка строк в листе)
+WORKLOG_SORT_ON_APPEND = _read_env_bool("WORKLOG_SORT_ON_APPEND", True)
+_WORKLOG_SCOPE_DEFAULT = (
+    (os.getenv("WORKLOG_SORT_SCOPE", "today") or "today").strip().lower()
+)
+if _WORKLOG_SCOPE_DEFAULT not in {"all", "today", "lastnhours"}:
+    _WORKLOG_SCOPE_DEFAULT = "today"
+WORKLOG_SORT_SCOPE = _WORKLOG_SCOPE_DEFAULT
+WORKLOG_SORT_LAST_HOURS = _read_env_int("WORKLOG_SORT_LAST_HOURS", 24)
+WORKLOG_SORT_SECONDARY = (
+    os.getenv("WORKLOG_SORT_SECONDARY", "Timestamp").strip() or "Timestamp"
+)
+WORKLOG_SORT_DEBOUNCE_SECONDS = _read_env_int("WORKLOG_SORT_DEBOUNCE_SECONDS", 10)
+
+# Серверная база данных (дополнительное хранилище)
+SERVER_DB_ENABLED = _read_env_bool("SERVER_DB_ENABLED", False)
+SERVER_DB_BASE_URL = os.getenv("SERVER_DB_BASE_URL", "").strip()
+SERVER_DB_TIMEOUT = _read_env_float("SERVER_DB_TIMEOUT", 5.0)
+SERVER_DB_AUTH_TOKEN = os.getenv("SERVER_DB_AUTH_TOKEN", "").strip() or None
+
+# Таймауты Google API (секунды)
+GOOGLE_API_TIMEOUT = _read_env_float("GOOGLE_API_TIMEOUT", 15.0)
 
 ARCHIVE_SHEET = "Archive"
 ACTIVE_SESSIONS_SHEET = "ActiveSessions"

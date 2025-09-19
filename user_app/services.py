@@ -2,17 +2,28 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Callable
+from typing import Any, Callable, Mapping
 
 from PyQt5.QtCore import QThread
 
 from auto_sync import SyncManager
-from config import DB_FALLBACK_PATH, DB_MAIN_PATH, HEARTBEAT_PERIOD_SEC
+from config import (
+    DB_FALLBACK_PATH,
+    DB_MAIN_PATH,
+    HEARTBEAT_PERIOD_SEC,
+    WORKLOG_SORT_DEBOUNCE_SECONDS,
+    WORKLOG_SORT_LAST_HOURS,
+    WORKLOG_SORT_ON_APPEND,
+    WORKLOG_SORT_SCOPE,
+    WORKLOG_SORT_SECONDARY,
+)
 from telemetry import trace_time
 from user_app import db_local
 from user_app.api import UserAPI
 from user_app.db_local import LocalDB
+from user_app.server_db import ServerDBClient, get_server_db
 from user_app.signals import SessionSignals, SyncSignals
 
 try:
@@ -186,6 +197,52 @@ class AutoSyncService:
             logger.info("Auto-sync service stopped")
 
 
+class WorklogSortScheduler:
+    def __init__(self, services: "Services") -> None:
+        self._services = services
+        self._lock = threading.RLock()
+        self._last_run: dict[str, float] = {}
+
+    def schedule(self, group: str) -> None:
+        if not WORKLOG_SORT_ON_APPEND:
+            return
+
+        normalized = (group or "").strip() or "General"
+        debounce = max(1, WORKLOG_SORT_DEBOUNCE_SECONDS)
+        now = time.monotonic()
+        with self._lock:
+            last = self._last_run.get(normalized, 0.0)
+            if now - last < debounce:
+                logger.debug(
+                    "Worklog sort for %s skipped due to debounce (%.1fs)",
+                    normalized,
+                    debounce,
+                )
+                return
+            self._last_run[normalized] = now
+
+        def _run() -> None:
+            try:
+                sheets = self._services.sheets
+                sort_columns = ["Start"]
+                secondary = WORKLOG_SORT_SECONDARY
+                if secondary and secondary not in sort_columns:
+                    sort_columns.append(secondary)
+                sheets.sort_worklog(
+                    normalized,
+                    scope=WORKLOG_SORT_SCOPE,
+                    by=sort_columns,
+                    last_hours=WORKLOG_SORT_LAST_HOURS,
+                )
+            except Exception as exc:  # pragma: no cover - background logging only
+                logger.debug("Worklog sort for %s failed: %s", normalized, exc)
+            finally:
+                with self._lock:
+                    self._last_run[normalized] = time.monotonic()
+
+        self._services.submit(_run)
+
+
 class Services:
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -197,6 +254,8 @@ class Services:
         self._auto_sync = AutoSyncService(self)
         self._session_signals: SessionSignals | None = None
         self._sync_signals: SyncSignals | None = None
+        self._server_db: ServerDBClient | None = None
+        self._worklog_sorter = WorklogSortScheduler(self)
 
     @property
     def db(self) -> LocalDB:
@@ -271,8 +330,15 @@ class Services:
         with self._lock:
             executor = self._executor
             self._executor = None
+            server_db = self._server_db
+            self._server_db = None
         if executor:
             executor.shutdown(wait=False)
+        if server_db:
+            try:
+                server_db.close()
+            except Exception:  # pragma: no cover - best effort cleanup
+                logger.debug("Server DB shutdown failed", exc_info=True)
         self.reset_db()
 
     def _ensure_db_initialized(self) -> None:
@@ -280,6 +346,53 @@ class Services:
             db_local.init_db(DB_MAIN_PATH, DB_FALLBACK_PATH)
         except Exception:
             logger.exception("Local DB initialization failed")
+
+    # --- Service helpers -----------------------------------------------------
+    def warmup_async(self) -> None:
+        def _warmup() -> None:
+            logger.debug("Services warmup task started")
+            try:
+                _ = self.sheets
+            except Exception as exc:  # pragma: no cover - network issues logged
+                logger.debug("Sheets warmup failed: %s", exc)
+            try:
+                _ = self.db
+            except Exception as exc:  # pragma: no cover
+                logger.debug("DB warmup failed: %s", exc)
+            server = self.server_db
+            if server:
+                server.ping()
+
+        self.submit(_warmup)
+
+    @property
+    def server_db(self) -> ServerDBClient | None:
+        with self._lock:
+            if self._server_db is None:
+                self._server_db = get_server_db()
+            return self._server_db
+
+    def replicate_session_start(self, payload: Mapping[str, Any]) -> None:
+        server = self.server_db
+        if not server:
+            return
+        self.submit(server.record_session_start, dict(payload))
+
+    def replicate_session_finish(self, payload: Mapping[str, Any]) -> None:
+        server = self.server_db
+        if not server:
+            return
+        self.submit(server.record_session_finish, dict(payload))
+
+    def replicate_action(self, payload: Mapping[str, Any]) -> None:
+        server = self.server_db
+        if not server:
+            return
+        self.submit(server.record_action, dict(payload))
+
+    def schedule_worklog_sort(self, group: str | None) -> None:
+        if self._worklog_sorter:
+            self._worklog_sorter.schedule(group or "")
 
 
 services = Services()

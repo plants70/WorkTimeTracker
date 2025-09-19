@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -264,6 +265,16 @@ class EmployeeApp(QWidget):
             else:
                 self.db.mark_actions_synced([prev_id])
                 self.last_sync_time = datetime.now()
+                try:
+                    payload = dict(action)
+                    payload["group"] = target_group
+                    self.services.replicate_action(payload)
+                except Exception:  # pragma: no cover - replication best effort
+                    logger.debug("Server DB action replication failed", exc_info=True)
+                try:
+                    self.services.schedule_worklog_sort(self.group)
+                except Exception:
+                    logger.debug("Failed to schedule WorkLog sort", exc_info=True)
         except Exception as e:
             logger.warning(f"Ошибка отправки завершённого статуса в Sheets: {e}")
             Notifier.show(
@@ -280,8 +291,6 @@ class EmployeeApp(QWidget):
     def _disable_post_logout(self) -> None:
         self.shift_ended = True
         self.finish_btn.setEnabled(False)
-        for btn in self.status_buttons.values():
-            btn.setEnabled(False)
 
     def _emit_session_finished(self, reason: str) -> None:
         self._logout_in_progress = False
@@ -297,10 +306,12 @@ class EmployeeApp(QWidget):
             except TypeError:
                 self.on_logout_callback()
 
-    def _start_logout_worker(self, mode: str) -> None:
-        self._executor.submit(self._logout_worker, mode)
+    def _start_logout_worker(self, mode: str) -> Future[str]:
+        future: Future[str] = self._executor.submit(self._logout_worker, mode)
+        future.add_done_callback(self._on_logout_worker_done)
+        return future
 
-    def _logout_worker(self, mode: str) -> None:
+    def _logout_worker(self, mode: str) -> str:
         reason = "local_logout"
         try:
             if mode == "local":
@@ -314,8 +325,31 @@ class EmployeeApp(QWidget):
                 reason = "remote_force_logout"
             else:
                 reason = mode
+        except Exception as exc:  # pragma: no cover - network failures tolerated
+            logger.debug("Logout worker encountered error: %s", exc)
+            reason = "local_logout_offline"
+        try:
+            if reason in {"local_logout", "local_logout_offline"}:
+                try:
+                    self.services.schedule_worklog_sort(self.group)
+                except Exception:
+                    logger.debug(
+                        "Failed to schedule WorkLog sort on logout", exc_info=True
+                    )
         finally:
-            self._emit_session_finished(reason)
+            return reason
+
+    def _on_logout_worker_done(self, future: Future[str]) -> None:
+        try:
+            reason = future.result()
+        except Exception as exc:  # pragma: no cover - executor errors
+            logger.debug("Logout worker future failed: %s", exc)
+            reason = "local_logout_offline"
+        if self.session_signals and hasattr(self.session_signals, "sessionFinalized"):
+            try:
+                self.session_signals.sessionFinalized.emit(reason)
+            except Exception as signal_exc:  # pragma: no cover
+                logger.debug("sessionFinalized emit failed: %s", signal_exc)
 
     def _finish_remote_session_with_retry(self) -> tuple[bool, bool]:
         """Возвращает (success, offline_hint)."""
@@ -327,7 +361,7 @@ class EmployeeApp(QWidget):
         for attempt in range(1, 4):
             try:
                 logout_time = datetime.now().isoformat()
-                with trace_time("logout"):
+                with trace_time("finish_active_session"):
                     ok = self.sheets_api.finish_active_session(
                         self.email,
                         self.session_id,
@@ -734,6 +768,20 @@ class EmployeeApp(QWidget):
                             record_id,
                             sync_exc,
                         )
+            try:
+                self.services.replicate_session_finish(
+                    {
+                        "session_id": self.session_id,
+                        "email": self.email,
+                        "name": self.name,
+                        "logout_time": logout_moment.isoformat(),
+                        "reason": status_value,
+                        "comment": comment,
+                        "group": self.group or None,
+                    }
+                )
+            except Exception:  # pragma: no cover - best effort replication
+                logger.debug("Failed to replicate session finish", exc_info=True)
             return record_id if record_id is not None else -1
         except Exception as e:
             logger.error(f"Ошибка записи завершения смены: {e}")
@@ -772,8 +820,9 @@ class EmployeeApp(QWidget):
 
         self._disable_post_logout()
         self.comment_input.clear()
-        Notifier.show("WorkLog", "Идёт завершение смены")
+        Notifier.show("WorkLog", "Завершение смены выполняется в фоне")
         self._start_logout_worker("local")
+        self._emit_session_finished("local_logout")
 
     def closeEvent(self, event):
         if not self.shift_ended:

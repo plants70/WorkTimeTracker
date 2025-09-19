@@ -19,6 +19,7 @@ import gspread
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.service_account import Credentials
 
+from config import GOOGLE_API_TIMEOUT
 from consts import normalize_session_status
 from telemetry import trace_time
 
@@ -46,6 +47,17 @@ class QuotaInfo:
 class WorklogWorksheetInfo:
     worksheet: Any
     header_to_col_index: dict[str, int]
+
+
+class _TimeoutAuthorizedSession(AuthorizedSession):
+    def __init__(self, credentials, *, timeout: float):
+        super().__init__(credentials)
+        self._default_timeout = max(1.0, float(timeout))
+
+    def request(self, method, url, **kwargs):  # type: ignore[override]
+        if "timeout" not in kwargs or kwargs["timeout"] is None:
+            kwargs["timeout"] = self._default_timeout
+        return super().request(method, url, **kwargs)
 
 
 class SheetsAPIError(Exception):
@@ -179,22 +191,16 @@ class SheetsAPI:
                 credentials = Credentials.from_service_account_file(
                     str(self.credentials_path), scopes=scopes
                 )
+                timeout = GOOGLE_API_TIMEOUT
                 self.client = gspread.client.Client(auth=credentials)
-                # gspread >=5
-                self.client.session = AuthorizedSession(credentials)
-                # На некоторых версиях http_client может отсутствовать — оставляем, как было у тебя
+                session = _TimeoutAuthorizedSession(credentials, timeout=timeout)
+                self.client.session = session
                 if hasattr(self.client, "http_client") and hasattr(
                     self.client.http_client, "timeout"
                 ):
-                    self.client.http_client.timeout = 30
+                    self.client.http_client.timeout = timeout
 
-                self._session = AuthorizedSession(credentials)
-                # У объекта AuthorizedSession нет атрибута timeout во всех версиях,
-                # но если есть — выставим.
-                try:
-                    self._session.timeout = 30  # type: ignore[attr-defined]
-                except Exception:
-                    pass
+                self._session = _TimeoutAuthorizedSession(credentials, timeout=timeout)
 
                 self._test_connection()
                 self._update_quota_info()
@@ -940,6 +946,22 @@ class SheetsAPI:
         *,
         reason: str | None = None,
     ) -> bool:
+        with trace_time("finish_active_session"):
+            return self._finish_active_session_impl(
+                email=email,
+                session_id=session_id,
+                logout_time=logout_time,
+                reason=reason,
+            )
+
+    def _finish_active_session_impl(
+        self,
+        *,
+        email: str,
+        session_id: str,
+        logout_time: str | None = None,
+        reason: str | None = None,
+    ) -> bool:
         """
         Надёжно завершает активную сессию:
         1) Пытается найти точный матч по Email+SessionID (безусловно обновляет статус/время).
@@ -954,8 +976,7 @@ class SheetsAPI:
             sid = str(session_id or "").strip()
             hmap = self._header_map(ws)  # lower -> index
 
-            # индексы с защитой разных регистров
-            def col(name):
+            def col(name: str) -> int | None:
                 return hmap.get(name.lower())
 
             c_status = col("Status") or col("status")
@@ -999,7 +1020,7 @@ class SheetsAPI:
                 )
                 return True
 
-            if exact_match := next(
+            exact_match = next(
                 (
                     (i, r)
                     for i, r in enumerate(table, start=2)
@@ -1007,11 +1028,11 @@ class SheetsAPI:
                     and str(r.get("SessionID", "")).strip() == sid
                 ),
                 None,
-            ):
+            )
+            if exact_match:
                 row_idx, row_dict = exact_match
                 return apply_update(row_idx, row_dict)
 
-            # 2) фоллбэк: последняя активная по email
             candidates = [
                 (i, r)
                 for i, r in enumerate(table, start=2)
@@ -1020,13 +1041,14 @@ class SheetsAPI:
             ]
             if not candidates:
                 logger.warning(
-                    f"finish_active_session: no active rows for email={email}, sid={session_id}"
+                    "finish_active_session: no active rows for email=%s, sid=%s",
+                    email,
+                    session_id,
                 )
                 return False
 
-            # выбираем по максимальному LoginTime (как строка, формат единообразный)
-            def sort_key(t):
-                idx, row = t
+            def sort_key(item):
+                idx, row = item
                 return ((row.get("LoginTime") or "").strip(), idx)
 
             row_idx, row_dict = sorted(candidates, key=sort_key)[-1]
@@ -1164,43 +1186,44 @@ class SheetsAPI:
 
         from config import ACTIVE_SESSIONS_SHEET
 
-        sid = str(session_id or "").strip()
-        if not sid:
-            return None
+        with trace_time("check_user_session_status"):
+            sid = str(session_id or "").strip()
+            if not sid:
+                return None
 
-        ws = self._get_ws(ACTIVE_SESSIONS_SHEET)
-        table = self._read_table(ws)
-        em = (email or "").strip().lower()
-        fallback_row: dict[str, Any] | None = None
-        fallback_row_idx: int | None = None
+            ws = self._get_ws(ACTIVE_SESSIONS_SHEET)
+            table = self._read_table(ws)
+            em = (email or "").strip().lower()
+            fallback_row: dict[str, Any] | None = None
+            fallback_row_idx: int | None = None
 
-        for row_idx, row in enumerate(table, start=2):
-            row_sid = str(row.get("SessionID", "") or "").strip()
-            if row_sid == sid:
-                status_value = normalize_session_status(row.get("Status"))
+            for row_idx, row in enumerate(table, start=2):
+                row_sid = str(row.get("SessionID", "") or "").strip()
+                if row_sid == sid:
+                    status_value = normalize_session_status(row.get("Status"))
+                    logger.info(
+                        "ActiveSessions status for session=%s -> %s",
+                        sid,
+                        status_value or "<unknown>",
+                    )
+                    return status_value
+                if em and (row.get("Email", "") or "").strip().lower() == em:
+                    fallback_row = row
+                    fallback_row_idx = row_idx
+
+            if fallback_row:
+                status_value = normalize_session_status(fallback_row.get("Status"))
                 logger.info(
-                    "ActiveSessions status for session=%s -> %s",
+                    "ActiveSessions status for session=%s (email=%s row=%s) -> %s",
                     sid,
+                    em or "<unknown>",
+                    fallback_row_idx if fallback_row_idx is not None else "<unknown>",
                     status_value or "<unknown>",
                 )
                 return status_value
-            if em and (row.get("Email", "") or "").strip().lower() == em:
-                fallback_row = row
-                fallback_row_idx = row_idx
 
-        if fallback_row:
-            status_value = normalize_session_status(fallback_row.get("Status"))
-            logger.info(
-                "ActiveSessions status for session=%s (email=%s row=%s) -> %s",
-                sid,
-                em or "<unknown>",
-                fallback_row_idx if fallback_row_idx is not None else "<unknown>",
-                status_value or "<unknown>",
-            )
-            return status_value
-
-        logger.info("ActiveSessions status for session=%s -> not found", sid)
-        return None
+            logger.info("ActiveSessions status for session=%s -> not found", sid)
+            return None
 
     def ack_remote_command(self, email: str, session_id: str) -> bool:
         """Очищает RemoteCommand в ActiveSessions по (email, session_id)."""
@@ -1346,9 +1369,10 @@ class SheetsAPI:
                     row.extend([""] * (col - len(row)))
                 row[col - 1] = value
 
-            self._request_with_retry(
-                info.worksheet.append_row, row, value_input_option="USER_ENTERED"
-            )
+            with trace_time("append_worklog"):
+                self._request_with_retry(
+                    info.worksheet.append_row, row, value_input_option="USER_ENTERED"
+                )
             logger.info(
                 f"WorkLog append: {event_id} (session={session_id or '-'}, group={target_group})"
             )
@@ -1549,6 +1573,143 @@ class SheetsAPI:
                 is_retryable=True,
                 details=str(e),
             ) from e
+
+    def sort_worklog(
+        self,
+        group: str,
+        *,
+        scope: str = "today",
+        by: list[str] | None = None,
+        last_hours: int | None = None,
+    ) -> None:
+        info = self.get_or_create_worklog_ws(group)
+        header_map = info.header_to_col_index
+        if not header_map:
+            logger.debug("sort_worklog skipped: no headers for group=%s", group)
+            return
+
+        columns = by or ["Start", "Timestamp"]
+        sort_specs = []
+        for column in columns:
+            idx = header_map.get(column)
+            if not idx:
+                logger.debug(
+                    "sort_worklog: column %s missing for group=%s", column, group
+                )
+                continue
+            sort_specs.append({"dimensionIndex": idx - 1, "sortOrder": "ASCENDING"})
+        if not sort_specs:
+            logger.debug("sort_worklog skipped: no valid columns for group=%s", group)
+            return
+
+        range_indices = self._resolve_sort_range(
+            info,
+            scope=scope,
+            last_hours=last_hours,
+        )
+        if not range_indices:
+            return
+        start_row_index, end_row_index = range_indices
+        if end_row_index <= start_row_index:
+            logger.debug(
+                "sort_worklog skipped: empty range for group=%s (scope=%s)",
+                group,
+                scope,
+            )
+            return
+
+        max_col = max(header_map.values())
+        body = {
+            "requests": [
+                {
+                    "sortRange": {
+                        "range": {
+                            "sheetId": info.worksheet.id,
+                            "startRowIndex": start_row_index,
+                            "endRowIndex": end_row_index,
+                            "startColumnIndex": 0,
+                            "endColumnIndex": max_col,
+                        },
+                        "sortSpecs": sort_specs,
+                    }
+                }
+            ]
+        }
+        spreadsheet = info.worksheet.spreadsheet
+        with trace_time("sort_worklog"):
+            self._request_with_retry(spreadsheet.batch_update, body)
+
+    def _resolve_sort_range(
+        self,
+        info: WorklogWorksheetInfo,
+        *,
+        scope: str,
+        last_hours: int | None = None,
+    ) -> tuple[int, int] | None:
+        header_map = info.header_to_col_index
+        if not header_map:
+            return None
+        max_col = max(header_map.values())
+        data_range = f"A2:{self._num_to_a1_col(max_col)}"
+        try:
+            values = self._request_with_retry(info.worksheet.get_values, data_range)
+        except Exception as exc:
+            logger.debug(
+                "sort_worklog: failed to fetch range for %s: %s",
+                info.worksheet.title,
+                exc,
+            )
+            return None
+        if not values:
+            return None
+
+        start_row_index = 1  # skip header
+        end_row_index = 1 + len(values)
+
+        scope_value = (scope or "").strip().lower()
+        if scope_value == "all":
+            return start_row_index, end_row_index
+
+        cutoff: dt.datetime | None = None
+        if scope_value == "today":
+            cutoff = dt.datetime.now(dt.UTC).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        elif scope_value == "lastnhours" and last_hours:
+            cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(
+                hours=max(1, int(last_hours))
+            )
+        if cutoff is None:
+            return start_row_index, end_row_index
+
+        start_col = header_map.get("Start")
+        timestamp_col = header_map.get("Timestamp")
+        for offset, row in enumerate(values, start=2):
+            row_dt = self._extract_row_datetime(row, start_col, timestamp_col)
+            if row_dt and row_dt >= cutoff:
+                return offset - 1, end_row_index
+
+        # nothing to sort within the requested window
+        return end_row_index, end_row_index
+
+    def _extract_row_datetime(
+        self,
+        row: list[Any],
+        start_col: int | None,
+        timestamp_col: int | None,
+    ) -> dt.datetime | None:
+        candidates: list[dt.datetime] = []
+        if start_col and start_col - 1 < len(row):
+            candidate = self._as_utc_datetime(row[start_col - 1])
+            if candidate:
+                candidates.append(candidate)
+        if timestamp_col and timestamp_col - 1 < len(row):
+            candidate = self._as_utc_datetime(row[timestamp_col - 1])
+            if candidate:
+                candidates.append(candidate)
+        if not candidates:
+            return None
+        return min(candidates)
 
     # ---------- utils ----------
 
