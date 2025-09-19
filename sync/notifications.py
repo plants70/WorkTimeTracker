@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 
 from PyQt5.QtCore import Qt

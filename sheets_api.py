@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # sheets_api.py
 import datetime as dt
 import json

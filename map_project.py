@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 
 EXCLUDE = {".venv", "__pycache__", ".git", ".idea", "dist", "build"}

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Инициализация пакета user_app
 from .version import __version__
 

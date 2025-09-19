@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # user_app/ui_helpers.py
 import re
 import time

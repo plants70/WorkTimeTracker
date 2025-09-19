@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # sync/network.py
 import logging
 import socket

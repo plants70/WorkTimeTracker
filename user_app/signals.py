@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # user_app/signals.py
 from PyQt5.QtCore import QObject, pyqtSignal
 
