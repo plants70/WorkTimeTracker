@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 from PyQt5.QtWidgets import (
     QDialog,
@@ -38,6 +38,9 @@ class LoginWindow(QDialog):
         self._init_ui()
         self._setup_shortcuts()
         self._connect_controller_signals()
+        self._slow_login_timer = QTimer(self)
+        self._slow_login_timer.setSingleShot(True)
+        self._slow_login_timer.timeout.connect(self._show_slow_login_hint)
 
     # --- UI setup -----------------------------------------------------
     def _resource_path(self, relative_path: str) -> str:
@@ -160,16 +163,19 @@ class LoginWindow(QDialog):
 
     def _on_login_started(self) -> None:
         self._set_loading_state(True, "Выполняется вход...")
+        self._slow_login_timer.start(3000)
 
     def _on_login_failed(self, message: str) -> None:
         self.auth_in_progress = False
         self._set_loading_state(False)
+        self._slow_login_timer.stop()
         if message:
             self._show_error_once(message)
 
     def _on_login_succeeded(self, _: dict) -> None:
         self.auth_in_progress = False
         self._set_loading_state(False)
+        self._slow_login_timer.stop()
         self.status_label.setText("")
         self.hide()
 
@@ -185,6 +191,10 @@ class LoginWindow(QDialog):
             self.status_label.setText(message)
         elif not loading:
             self.status_label.setText("")
+
+    def _show_slow_login_hint(self) -> None:
+        if self.auth_in_progress:
+            self.status_label.setText("Подключение продолжается в фоне...")
 
     def _show_error_once(self, message: str) -> None:
         if self._showing_error:

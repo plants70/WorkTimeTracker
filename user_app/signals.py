@@ -20,3 +20,4 @@ class SessionSignals(QObject):
 
     # Причина завершения передаётся строкой (local_logout, remote_force_logout, ...)
     sessionFinished = pyqtSignal(str)
+    sessionFinalized = pyqtSignal(str)

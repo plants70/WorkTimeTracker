@@ -47,10 +47,13 @@ class AppController(QObject):
         self._pending_finish_reason: str | None = None
         self._remote_logout_triggered = False
         self._last_message: str | None = None
+        self._last_known_group: str | None = None
 
         self.session_signals = self.services.session_signals
         self.sync_signals = self.services.sync_signals
         self.session_signals.sessionFinished.connect(self._handle_session_finished)
+        if hasattr(self.session_signals, "sessionFinalized"):
+            self.session_signals.sessionFinalized.connect(self._handle_session_finalized)
         self.sync_signals.force_logout.connect(
             lambda: self.handle_remote_force_logout("remote_force_logout")
         )
@@ -206,9 +209,14 @@ class AppController(QObject):
         session_id = user_data.get("session_id") or ""
         session_state.set_session_id(session_id)
         session_state.set_user_email(user_data.get("email", ""))
+        self._last_known_group = user_data.get("group", "")
 
         self._create_main_window(user_data)
         self.to_active(session_id)
+        try:
+            self.services.schedule_worklog_sort(self._last_known_group or "")
+        except Exception:
+            logger.debug("Worklog sort scheduling failed after login", exc_info=True)
 
     def _on_login_failed(self, message: str) -> None:
         self._current_user = None
@@ -233,6 +241,14 @@ class AppController(QObject):
             self.handle_remote_force_logout(normalized)
         else:
             self.to_returning_to_login(normalized)
+
+    def _handle_session_finalized(self, reason: str) -> None:
+        normalized = (reason or "").strip()
+        message = self._logout_message(normalized)
+        self._last_message = message
+        if self.login_window:
+            self.login_window.show_info(message)
+        logger.info("Logout finalized with reason=%s", normalized or "<empty>")
 
     # --- Remote handling ----------------------------------------------
     def handle_remote_force_logout(self, reason: str) -> None:
@@ -268,6 +284,10 @@ class AppController(QObject):
                 self.services.submit(_ack)
 
         self.remote_logout.emit(logout_reason)
+        try:
+            self.services.schedule_worklog_sort(self._last_known_group or "")
+        except Exception:
+            logger.debug("Failed to schedule WorkLog sort after remote logout", exc_info=True)
 
     # --- Helpers ------------------------------------------------------
     def _create_main_window(self, user_data: Dict[str, Any]) -> None:
@@ -428,7 +448,7 @@ class AppController(QObject):
                 if active_session:
                     existing_sid = active_session.get("SessionID")
                     if existing_sid:
-                        with trace_time("logout"):
+                        with trace_time("finish_active_session"):
                             sheets.finish_active_session(email, existing_sid)
 
                 sheets.set_active_session(
@@ -451,6 +471,20 @@ class AppController(QObject):
             )
             if created and record_id:
                 QTimer.singleShot(0, lambda: logger.debug("Local session recorded"))
+
+            try:
+                self.services.replicate_session_start(
+                    {
+                        "session_id": session_id,
+                        "email": normalized.get("email", email),
+                        "name": normalized.get("name", ""),
+                        "status": STATUS_ACTIVE,
+                        "started_at": login_time_iso,
+                        "group": normalized.get("group") or None,
+                    }
+                )
+            except Exception:  # pragma: no cover - replication is best-effort
+                logger.debug("Failed to replicate session start to server DB", exc_info=True)
 
             session_state.set_session_id(session_id)
             session_state.set_user_email(normalized.get("email", email))
