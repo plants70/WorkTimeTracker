@@ -19,12 +19,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from auto_sync import SyncManager  # ← добавили
-from consts import (
-    STATUS_ACTIVE,
-    STATUS_FORCE_LOGOUT,
-    STATUS_LOGOUT,
-    normalize_session_status,
-)
 
 # Инициализация логирования через единый модуль
 from config import (
@@ -33,6 +27,12 @@ from config import (
     HEARTBEAT_PERIOD_SEC,
     LOG_DIR,
     get_credentials_file,
+)
+from consts import (
+    STATUS_ACTIVE,
+    STATUS_FORCE_LOGOUT,
+    STATUS_LOGOUT,
+    normalize_session_status,
 )
 from logging_setup import setup_logging
 from notifications.engine import start_background_poller
@@ -84,9 +84,7 @@ def _hb_loop(
         if suppress_evt and suppress_evt.is_set():
             return
         try:
-            raw_status = api.get_session_status(
-                session_id=session_id, email=email
-            )
+            raw_status = api.get_session_status(session_id=session_id, email=email)
         except Exception as exc:  # pragma: no cover - защита от сетевых ошибок
             logger.debug("Heartbeat remote check failed: %s", exc)
             return
@@ -495,12 +493,7 @@ class ApplicationManager(QObject):
             )
             return
 
-        if (
-            reason.startswith("remote")
-            and record_id
-            and record_id > 0
-            and created
-        ):
+        if reason.startswith("remote") and record_id and record_id > 0 and created:
             try:
                 db.mark_actions_synced([record_id])
             except Exception as exc:

@@ -12,11 +12,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import MAX_COMMENT_LENGTH, STATUS_GROUPS
-from consts import STATUS_ACTIVE, STATUS_FORCE_LOGOUT, STATUS_LOGOUT, normalize_session_status
+from consts import (
+    STATUS_ACTIVE,
+    STATUS_FORCE_LOGOUT,
+    STATUS_LOGOUT,
+    normalize_session_status,
+)
 from sheets_api import SheetsAPIError, get_sheets_api
+from user_app import session as session_state
 from user_app.db_local import LocalDB, LocalDBError, write_tx
 from user_app.signals import SessionSignals
-from user_app import session as session_state
 
 try:
     from sync.notifications import Notifier
@@ -409,8 +414,12 @@ class EmployeeApp(QWidget):
                     user_group=self.group or None,
                 )
                 if created and record_id and record_id > 0:
-                    self._send_action_to_sheets(record_id, user_group=self.group or None)
-                self.shift_start_time = self._get_local_session_start(self.shift_start_time)
+                    self._send_action_to_sheets(
+                        record_id, user_group=self.group or None
+                    )
+                self.shift_start_time = self._get_local_session_start(
+                    self.shift_start_time
+                )
                 self.status_start_time = datetime.now()
         except LocalDBError as e:
             logger.error(f"Ошибка инициализации БД: {e}")
@@ -521,9 +530,7 @@ class EmployeeApp(QWidget):
         """
         try:
             status = normalize_session_status(
-                self.sheets_api.check_user_session_status(
-                    self.email, self.session_id
-                )
+                self.sheets_api.check_user_session_status(self.email, self.session_id)
             )
             if status:
                 logger.debug(

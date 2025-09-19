@@ -1182,10 +1182,7 @@ class SheetsAPI:
                     status_value or "<unknown>",
                 )
                 return status_value
-            if (
-                em
-                and (row.get("Email", "") or "").strip().lower() == em
-            ):
+            if em and (row.get("Email", "") or "").strip().lower() == em:
                 fallback_row = row
                 fallback_row_idx = row_idx
 

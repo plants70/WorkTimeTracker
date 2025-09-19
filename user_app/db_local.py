@@ -10,8 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from consts import STATUS_ACTIVE, STATUS_FORCE_LOGOUT, STATUS_LOGOUT
 from config import LOCAL_DB_PATH, MAX_COMMENT_LENGTH, MAX_HISTORY_DAYS
+from consts import STATUS_ACTIVE, STATUS_LOGOUT
 from user_app import session as session_state
 from user_app.db_migrations import apply_migrations
 from user_app.session import generate_session_id

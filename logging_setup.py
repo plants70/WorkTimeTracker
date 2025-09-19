@@ -16,7 +16,12 @@ _ROOT_LOGGER_CONFIGURED = False
 try:  # pragma: no cover - защитный импорт
     from config import DEBUG_IDS as _DEBUG_IDS  # type: ignore
 except Exception:  # pragma: no cover - fallback на окружение
-    _DEBUG_IDS = os.getenv("DEBUG_IDS", "").strip().lower() in {"1", "true", "yes", "on"}
+    _DEBUG_IDS = os.getenv("DEBUG_IDS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 # ----------------------------- PII masking -----------------------------------
