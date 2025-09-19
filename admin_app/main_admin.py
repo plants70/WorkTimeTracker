@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from functools import partial
 
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (
@@ -13,11 +14,13 @@ from PyQt5.QtWidgets import (
     QComboBox,
     QDialog,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QAbstractItemView,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -149,7 +152,19 @@ class AdminWindow(QMainWindow):
         self._active_cache: tuple[float, set[str]] = (0.0, set())  # (ts, {emails})
         self._active_ttl_sec = 30.0
 
+        # Активные сессии
+        self.active_sessions: list[dict[str, str]] = []
+        self._sessions_thread: QThread | None = None
+        self._sessions_worker: "_ListActiveSessionsWorker" | None = None
+        self._kick_threads: dict[str, QThread] = {}
+        self._kick_workers: dict[str, "_KickSessionWorker"] = {}
+        self._kick_buttons: dict[str, QPushButton] = {}
+        self._reap_thread: QThread | None = None
+        self._reap_worker: "_ReapSessionsWorker" | None = None
+
         self._build_ui()
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Инициализируем загрузку списка пользователей в фоне
         self._load_users_async()
@@ -270,6 +285,43 @@ class AdminWindow(QMainWindow):
 
         self.tabs.addTab(self.tab_schedule, "График")
 
+        # --- Вкладка "Сессии" ---
+        self.tab_sessions = QWidget()
+        sessions_layout = QVBoxLayout(self.tab_sessions)
+
+        sessions_controls = QHBoxLayout()
+        self.btn_refresh_sessions = QPushButton("Обновить список")
+        self.btn_refresh_sessions.clicked.connect(self.load_active_sessions)
+        sessions_controls.addWidget(self.btn_refresh_sessions)
+
+        self.btn_reap_sessions = QPushButton("Проверить неактивные")
+        self.btn_reap_sessions.clicked.connect(self.reap_stale_sessions)
+        sessions_controls.addWidget(self.btn_reap_sessions)
+
+        sessions_controls.addStretch()
+        sessions_layout.addLayout(sessions_controls)
+
+        session_headers = [
+            "Email",
+            "ФИО",
+            "Группа",
+            "LoginTime",
+            "LastPing",
+            "Status",
+            "SessionID",
+            "Действия",
+        ]
+        self.sessions_table = QTableWidget(0, len(session_headers))
+        self.sessions_table.setHorizontalHeaderLabels(session_headers)
+        self.sessions_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.sessions_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        header = self.sessions_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setStretchLastSection(True)
+        sessions_layout.addWidget(self.sessions_table)
+
+        self.tabs.addTab(self.tab_sessions, "Сессии")
+
         # --- Вкладка "Дополнительно" (плейсхолдер) ---
         self.tab_extra = QWidget()
         extra_layout = QVBoxLayout(self.tab_extra)
@@ -305,6 +357,14 @@ class AdminWindow(QMainWindow):
         QMessageBox.warning(self, "Ошибка", msg)
 
     # ---------- Активные сессии (кэш) ----------
+    def _on_tab_changed(self, index: int):
+        try:
+            widget = self.tabs.widget(index)
+        except Exception:
+            return
+        if widget is getattr(self, "tab_sessions", None):
+            self.load_active_sessions()
+
     def _get_active_emails_cached(self) -> set[str]:
         ts, emails = self._active_cache
         if time.monotonic() - ts < self._active_ttl_sec:
@@ -336,6 +396,181 @@ class AdminWindow(QMainWindow):
                 self.apply_user_search()
         except Exception as e:
             logger.warning("Не удалось обновить активные сессии: %s", e)
+
+    def _set_sessions_controls_enabled(self, enabled: bool) -> None:
+        if hasattr(self, "btn_refresh_sessions"):
+            self.btn_refresh_sessions.setEnabled(enabled)
+        if hasattr(self, "btn_reap_sessions"):
+            self.btn_reap_sessions.setEnabled(enabled)
+
+    def load_active_sessions(self):
+        if self._sessions_thread and self._sessions_thread.isRunning():
+            return
+        self._set_sessions_controls_enabled(False)
+        self.statusBar().showMessage("Загрузка активных сессий...")
+
+        self._sessions_thread = QThread(self)
+        self._sessions_worker = _ListActiveSessionsWorker(self.repo)
+        self._sessions_worker.moveToThread(self._sessions_thread)
+        self._sessions_worker.finished.connect(self._on_sessions_loaded)
+        self._sessions_thread.started.connect(self._sessions_worker.run)
+        self._sessions_worker.finished.connect(self._sessions_thread.quit)
+        self._sessions_worker.finished.connect(self._sessions_worker.deleteLater)
+        self._sessions_thread.finished.connect(self._sessions_thread.deleteLater)
+        self._sessions_thread.finished.connect(
+            lambda: setattr(self, "_sessions_thread", None)
+        )
+        self._sessions_thread.start()
+
+    def _on_sessions_loaded(self, sessions: list[dict], error: str | None):
+        self.statusBar().clearMessage()
+        self._sessions_worker = None
+        self._set_sessions_controls_enabled(True)
+
+        if error:
+            logger.warning("load_active_sessions error: %s", error)
+            self._warn(f"Не удалось получить активные сессии: {error}")
+
+        self.active_sessions = sessions or []
+        emails = {
+            str(s.get("Email", "")).strip().lower()
+            for s in self.active_sessions
+            if str(s.get("Status", "")).strip().lower() == "active"
+        }
+        self._active_cache = (time.monotonic(), emails)
+
+        self._render_sessions_table()
+
+    def _render_sessions_table(self):
+        self.sessions_table.setRowCount(0)
+        self._kick_buttons.clear()
+
+        if not self.active_sessions:
+            return
+
+        self.sessions_table.setRowCount(len(self.active_sessions))
+        for row_idx, session in enumerate(self.active_sessions):
+            email = str(session.get("Email") or session.get("email") or "")
+            name = str(session.get("Name") or session.get("name") or "")
+            group = str(session.get("Group") or session.get("group") or "")
+            login_time = str(
+                session.get("LoginTime")
+                or session.get("login_time")
+                or session.get("Login")
+                or ""
+            )
+            last_ping = str(
+                session.get("LastPing")
+                or session.get("lastping")
+                or session.get("Last Ping")
+                or ""
+            )
+            status = str(session.get("Status") or session.get("status") or "")
+            session_id = str(session.get("SessionID") or session.get("sessionid") or "")
+
+            values = [email, name, group, login_time, last_ping, status, session_id]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.UserRole, value)
+                self.sessions_table.setItem(row_idx, col, item)
+
+            btn = QPushButton("Kick")
+            btn.setEnabled(bool(session_id))
+            btn.clicked.connect(partial(self._on_kick_clicked, session_id))
+            self.sessions_table.setCellWidget(row_idx, len(values), btn)
+            if session_id:
+                self._kick_buttons[session_id] = btn
+
+        self.sessions_table.resizeRowsToContents()
+
+    def reap_stale_sessions(self):
+        if self._reap_thread and self._reap_thread.isRunning():
+            return
+        self._set_sessions_controls_enabled(False)
+        self.statusBar().showMessage("Проверка неактивных сессий...")
+
+        self._reap_thread = QThread(self)
+        self._reap_worker = _ReapSessionsWorker(self.repo)
+        self._reap_worker.moveToThread(self._reap_thread)
+        self._reap_worker.finished.connect(self._on_reap_finished)
+        self._reap_thread.started.connect(self._reap_worker.run)
+        self._reap_worker.finished.connect(self._reap_thread.quit)
+        self._reap_worker.finished.connect(self._reap_worker.deleteLater)
+        self._reap_thread.finished.connect(self._reap_thread.deleteLater)
+        self._reap_thread.finished.connect(
+            lambda: setattr(self, "_reap_thread", None)
+        )
+        self._reap_thread.start()
+
+    def _on_reap_finished(self, count: int, error: str | None):
+        self.statusBar().clearMessage()
+        self._set_sessions_controls_enabled(True)
+        self._reap_worker = None
+
+        if error:
+            logger.warning("reap_stale_sessions failed: %s", error)
+            self._warn(f"Проверка неактивных сессий не удалась: {error}")
+        else:
+            msg = (
+                f"Закрыто {count} сессий."
+                if count
+                else "Не найдено неактивных сессий."
+            )
+            self.statusBar().showMessage(msg, 5000)
+
+        self._active_cache = (0.0, set())
+        self.refresh_users()
+        self.load_active_sessions()
+
+    def _on_kick_clicked(self, session_id: str):
+        sid = (session_id or "").strip()
+        if not sid:
+            self._warn("SessionID отсутствует")
+            return
+
+        if sid in self._kick_threads and self._kick_threads[sid].isRunning():
+            return
+
+        btn = self._kick_buttons.get(sid)
+        if btn:
+            btn.setEnabled(False)
+
+        thread = QThread(self)
+        worker = _KickSessionWorker(self.repo, sid)
+        worker.moveToThread(thread)
+        worker.finished.connect(self._on_kick_finished)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._kick_threads.pop(sid, None))
+        self._kick_threads[sid] = thread
+        self._kick_workers[sid] = worker
+        self.statusBar().showMessage(f"Завершение сессии {sid}...")
+        thread.started.connect(worker.run)
+        thread.start()
+
+    def _on_kick_finished(self, session_id: str, success: bool, error: str | None):
+        self.statusBar().clearMessage()
+        self._kick_workers.pop(session_id, None)
+        self._kick_threads.pop(session_id, None)
+
+        btn = self._kick_buttons.get(session_id)
+        if success:
+            if btn:
+                btn.setEnabled(False)
+            self._active_cache = (0.0, set())
+            self.refresh_users()
+            self.load_active_sessions()
+            self.statusBar().showMessage(
+                f"Сессия {session_id} завершена.", 5000
+            )
+        else:
+            if btn:
+                btn.setEnabled(True)
+            if error:
+                self._warn(f"Не удалось завершить сессию: {error}")
+            else:
+                self._warn("Не удалось завершить сессию")
 
     # =================== Таб "Сотрудники" ===================
 
@@ -641,6 +876,70 @@ class _ListUsersWorker(QObject):
             users = []
         # вернёмся в GUI-поток через сигнал
         self.finished.emit(users)
+
+
+class _ListActiveSessionsWorker(QObject):
+    finished = pyqtSignal(list, str)
+
+    def __init__(self, repo: AdminRepo):
+        super().__init__()
+        self.repo = repo
+
+    def run(self):
+        error_msg = ""
+        sessions: list[dict[str, str]] = []
+        try:
+            sessions = self.repo.get_active_sessions()
+        except Exception as e:
+            logging.getLogger(__name__).exception(
+                "Ошибка при загрузке активных сессий: %s", e
+            )
+            error_msg = str(e)
+        self.finished.emit(sessions or [], error_msg)
+
+
+class _ReapSessionsWorker(QObject):
+    finished = pyqtSignal(int, str)
+
+    def __init__(self, repo: AdminRepo, max_idle_minutes: int | None = None):
+        super().__init__()
+        self.repo = repo
+        self.max_idle_minutes = max_idle_minutes
+
+    def run(self):
+        error_msg = ""
+        count = 0
+        try:
+            count = int(self.repo.reap_stale_sessions(self.max_idle_minutes))
+        except Exception as e:
+            logging.getLogger(__name__).exception(
+                "Ошибка при запуске reaper: %s", e
+            )
+            error_msg = str(e)
+        self.finished.emit(count, error_msg)
+
+
+class _KickSessionWorker(QObject):
+    finished = pyqtSignal(str, bool, str)
+
+    def __init__(self, repo: AdminRepo, session_id: str):
+        super().__init__()
+        self.repo = repo
+        self.session_id = session_id
+
+    def run(self):
+        error_msg = ""
+        success = False
+        try:
+            success = bool(self.repo.kick_session(self.session_id))
+        except Exception as e:
+            logging.getLogger(__name__).exception(
+                "Ошибка при завершении сессии %s: %s", self.session_id, e
+            )
+            error_msg = str(e)
+        if not success and not error_msg:
+            error_msg = "Сессия не найдена или уже завершена"
+        self.finished.emit(self.session_id, success, error_msg)
 
 
 if __name__ == "__main__":

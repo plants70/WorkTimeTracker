@@ -174,11 +174,25 @@ class AdminRepo:
             # корректное завершение активной строки
             ok = False
             if hasattr(self.sheets, "finish_active_session"):
-                ok = bool(self.sheets.finish_active_session(email=em, session_id=sid, logout_time=now_iso))  # type: ignore[attr-defined]
+                ok = bool(
+                    self.sheets.finish_active_session(  # type: ignore[attr-defined]
+                        email=em,
+                        session_id=sid,
+                        logout_time=now_iso,
+                        reason="FORCE_LOGOUT (admin)",
+                    )
+                )
             else:
                 # на очень старых версиях можно попробовать «универсальный» апдейт, если он есть
                 if hasattr(self.sheets, "_update_session_status"):
-                    ok = bool(self.sheets._update_session_status(email=em, session_id=sid, status="finished", logout_time=now_iso))  # type: ignore[attr-defined]
+                    ok = bool(
+                        self.sheets._update_session_status(  # type: ignore[attr-defined]
+                            email=em,
+                            session_id=sid,
+                            status="FORCE_LOGOUT",
+                            logout_time=now_iso,
+                        )
+                    )
             if ok:
                 logger.info("Force logout success for %s (session %s)", email, sid)
             else:
@@ -189,6 +203,65 @@ class AdminRepo:
         except Exception as e:
             logger.exception("force_logout error for %s: %s", email, e)
             return False
+
+    def kick_session(self, session_id: str) -> bool:
+        """Закрывает активную сессию по session_id (FORCE_LOGOUT)."""
+
+        sid = (session_id or "").strip()
+        if not sid:
+            return False
+
+        reason = "FORCE_LOGOUT (admin)"
+        try:
+            if hasattr(self.sheets, "kick_active_session"):
+                ok = bool(
+                    self.sheets.kick_active_session(  # type: ignore[attr-defined]
+                        session_id=sid,
+                        reason=reason,
+                    )
+                )
+                if ok:
+                    return True
+        except TypeError:
+            # Старый интерфейс — попробуем найти email и дернуть ещё раз
+            pass
+        except Exception as e:
+            logger.exception("kick_session error for %s: %s", sid, e)
+            return False
+
+        try:
+            sessions = self.get_active_sessions()
+            for row in sessions:
+                row_sid = str(row.get("SessionID", "")).strip()
+                if row_sid != sid:
+                    continue
+                email = str(row.get("Email", "")).strip().lower()
+                if not email:
+                    break
+                return bool(
+                    self.sheets.finish_active_session(  # type: ignore[attr-defined]
+                        email=email,
+                        session_id=sid,
+                        reason=reason,
+                    )
+                )
+        except Exception as e:
+            logger.exception("kick_session fallback failed for %s: %s", sid, e)
+        return False
+
+    def reap_stale_sessions(self, max_idle_minutes: int | None = None) -> int:
+        """Вызывает серверный reaper (FORCE_LOGOUT для неактивных сессий)."""
+
+        try:
+            if hasattr(self.sheets, "reap_stale_sessions"):
+                return int(
+                    self.sheets.reap_stale_sessions(  # type: ignore[attr-defined]
+                        max_idle_minutes=max_idle_minutes
+                    )
+                )
+        except Exception as e:
+            logger.exception("reap_stale_sessions error: %s", e)
+        return 0
 
     # -------------------------------------------------------------------------
     # Schedule (Shift calendar)

@@ -598,7 +598,9 @@ class EmployeeApp(QWidget):
                         ok = ok or ok2
                     else:
                         ok2 = self.sheets_api.kick_active_session(
-                            self.email, self.session_id, lt
+                            session_id=self.session_id,
+                            email=self.email,
+                            logout_time=lt,
                         )  # меняет статус, но приемлемо
                         logger.warning(
                             f"[LOGOUT/ActiveSessions] fallback kick_active_session -> {ok2}"
