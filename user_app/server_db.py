@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 class ServerDBClient:
     """Thin HTTP client for optional server-side persistence."""
 
-    def __init__(self, base_url: str, *, timeout: float, token: str | None = None) -> None:
+    def __init__(
+        self, base_url: str, *, timeout: float, token: str | None = None
+    ) -> None:
         normalized = (base_url or "").strip().rstrip("/")
         if not normalized:
             raise ValueError("Server DB base URL must be provided")
@@ -90,7 +92,9 @@ def get_server_db() -> ServerDBClient | None:
         logger.info("Server DB integration disabled via configuration")
         return None
     if not SERVER_DB_BASE_URL:
-        logger.warning("SERVER_DB_BASE_URL is not configured; disabling server DB client")
+        logger.warning(
+            "SERVER_DB_BASE_URL is not configured; disabling server DB client"
+        )
         return None
     try:
         client = ServerDBClient(

@@ -333,7 +333,9 @@ class EmployeeApp(QWidget):
                 try:
                     self.services.schedule_worklog_sort(self.group)
                 except Exception:
-                    logger.debug("Failed to schedule WorkLog sort on logout", exc_info=True)
+                    logger.debug(
+                        "Failed to schedule WorkLog sort on logout", exc_info=True
+                    )
         finally:
             return reason
 

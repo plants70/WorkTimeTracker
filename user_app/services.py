@@ -23,8 +23,8 @@ from telemetry import trace_time
 from user_app import db_local
 from user_app.api import UserAPI
 from user_app.db_local import LocalDB
-from user_app.signals import SessionSignals, SyncSignals
 from user_app.server_db import ServerDBClient, get_server_db
+from user_app.signals import SessionSignals, SyncSignals
 
 try:
     from sheets_api import SheetsAPI, get_sheets_api

@@ -200,9 +200,7 @@ class SheetsAPI:
                 ):
                     self.client.http_client.timeout = timeout
 
-                self._session = _TimeoutAuthorizedSession(
-                    credentials, timeout=timeout
-                )
+                self._session = _TimeoutAuthorizedSession(credentials, timeout=timeout)
 
                 self._test_connection()
                 self._update_quota_info()
@@ -982,11 +980,7 @@ class SheetsAPI:
                 return hmap.get(name.lower())
 
             c_status = col("Status") or col("status")
-            c_logout = (
-                col("LogoutTime")
-                or col("logouttime")
-                or col("logout time")
-            )
+            c_logout = col("LogoutTime") or col("logouttime") or col("logout time")
             if not (c_status and c_logout):
                 raise SheetsAPIError("ActiveSessions headers missing Status/LogoutTime")
 
@@ -1599,7 +1593,9 @@ class SheetsAPI:
         for column in columns:
             idx = header_map.get(column)
             if not idx:
-                logger.debug("sort_worklog: column %s missing for group=%s", column, group)
+                logger.debug(
+                    "sort_worklog: column %s missing for group=%s", column, group
+                )
                 continue
             sort_specs.append({"dimensionIndex": idx - 1, "sortOrder": "ASCENDING"})
         if not sort_specs:

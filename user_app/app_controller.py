@@ -53,7 +53,9 @@ class AppController(QObject):
         self.sync_signals = self.services.sync_signals
         self.session_signals.sessionFinished.connect(self._handle_session_finished)
         if hasattr(self.session_signals, "sessionFinalized"):
-            self.session_signals.sessionFinalized.connect(self._handle_session_finalized)
+            self.session_signals.sessionFinalized.connect(
+                self._handle_session_finalized
+            )
         self.sync_signals.force_logout.connect(
             lambda: self.handle_remote_force_logout("remote_force_logout")
         )
@@ -287,7 +289,9 @@ class AppController(QObject):
         try:
             self.services.schedule_worklog_sort(self._last_known_group or "")
         except Exception:
-            logger.debug("Failed to schedule WorkLog sort after remote logout", exc_info=True)
+            logger.debug(
+                "Failed to schedule WorkLog sort after remote logout", exc_info=True
+            )
 
     # --- Helpers ------------------------------------------------------
     def _create_main_window(self, user_data: Dict[str, Any]) -> None:
@@ -484,7 +488,9 @@ class AppController(QObject):
                     }
                 )
             except Exception:  # pragma: no cover - replication is best-effort
-                logger.debug("Failed to replicate session start to server DB", exc_info=True)
+                logger.debug(
+                    "Failed to replicate session start to server DB", exc_info=True
+                )
 
             session_state.set_session_id(session_id)
             session_state.set_user_email(normalized.get("email", email))

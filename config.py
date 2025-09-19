@@ -51,6 +51,7 @@ def _read_env_float(var_name: str, default: float) -> float:
     except ValueError:
         return default
 
+
 # ==================== Импорт для работы с зашифрованным credentials ====================
 import pyzipper
 
@@ -210,7 +211,9 @@ WORKLOG_HEADERS = [
 
 # WorkLog сортировки (перестановка строк в листе)
 WORKLOG_SORT_ON_APPEND = _read_env_bool("WORKLOG_SORT_ON_APPEND", True)
-_WORKLOG_SCOPE_DEFAULT = (os.getenv("WORKLOG_SORT_SCOPE", "today") or "today").strip().lower()
+_WORKLOG_SCOPE_DEFAULT = (
+    (os.getenv("WORKLOG_SORT_SCOPE", "today") or "today").strip().lower()
+)
 if _WORKLOG_SCOPE_DEFAULT not in {"all", "today", "lastnhours"}:
     _WORKLOG_SCOPE_DEFAULT = "today"
 WORKLOG_SORT_SCOPE = _WORKLOG_SCOPE_DEFAULT

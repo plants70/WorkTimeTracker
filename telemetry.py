@@ -5,7 +5,6 @@ import time
 from contextlib import contextmanager
 from typing import Iterator
 
-
 _WARN_THRESHOLDS_MS: dict[str, float] = {
     "login": 3000.0,
     "finish_active_session": 2000.0,
