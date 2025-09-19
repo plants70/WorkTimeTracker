@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 
 from config import DEFAULT_WORKLOG_GROUP, normalize_group_name

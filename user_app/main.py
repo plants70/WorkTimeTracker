@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # user_app/main.py
 import atexit
 import datetime as dt

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # build_admin.py
 import logging
 import shutil

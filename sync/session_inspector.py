@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # sync/session_inspector.py
 import datetime as dt
 import logging

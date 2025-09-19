@@ -8,6 +8,8 @@
 Запуск:
   python tools/audit_api_surface.py -r .
 """
+from __future__ import annotations
+
 import argparse
 import ast
 import inspect
