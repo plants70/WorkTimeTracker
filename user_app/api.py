@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import uuid
 
+from consts import STATUS_FORCE_LOGOUT, STATUS_LOGOUT, normalize_session_status
 from sheets_api import SheetsAPI, SheetsAPIError
+from user_app.session import generate_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class UserAPI:
         Создаёт запись в ActiveSessions (Status=active).
         Возвращает session_id.
         """
-        session_id = str(uuid.uuid4())
+        session_id = generate_session_id(email)
         self.sheets.set_active_session(
             email=email,
             name=name,
@@ -66,10 +67,15 @@ class UserAPI:
         """
         Пулинг статуса: если админ принудительно разлогинил (Status=kicked) — вернём True.
         """
-        st = self.sheets.check_user_session_status(email=email, session_id=session_id)
-        return st in ("kicked", "finished")
+        status = self.sheets.check_user_session_status(
+            email=email, session_id=session_id
+        )
+        normalized = normalize_session_status(status)
+        return normalized in {STATUS_FORCE_LOGOUT, STATUS_LOGOUT}
 
-    def get_session_status(self, email: str, session_id: str) -> str | None:
+    def get_session_status(
+        self, session_id: str, email: str | None = None
+    ) -> str | None:
         try:
             return self.sheets.check_user_session_status(
                 email=email, session_id=session_id

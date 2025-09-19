@@ -4,7 +4,7 @@ import logging
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -12,7 +12,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import MAX_COMMENT_LENGTH, STATUS_GROUPS
+from consts import (
+    STATUS_ACTIVE,
+    STATUS_FORCE_LOGOUT,
+    STATUS_LOGOUT,
+    normalize_session_status,
+)
 from sheets_api import SheetsAPIError, get_sheets_api
+from user_app import session as session_state
 from user_app.db_local import LocalDB, LocalDBError, write_tx
 from user_app.signals import SessionSignals
 
@@ -58,6 +65,7 @@ class EmployeeApp(QWidget):
         login_was_performed: bool = True,
         session_signals: Optional[SessionSignals] = None,
         on_session_finish_requested: Optional[Callable[[str], None]] = None,
+        session_started_at: Optional[str] = None,
     ):
         super().__init__()
         self.email = email
@@ -70,9 +78,10 @@ class EmployeeApp(QWidget):
         self.session_signals = session_signals
         self.on_session_finish_requested = on_session_finish_requested
 
-        self.current_status = "В работе"
-        self.status_start_time = datetime.now()
-        self.shift_start_time = datetime.now()
+        now_local = datetime.now()
+        self.current_status = STATUS_ACTIVE
+        self.status_start_time = now_local
+        self.shift_start_time = now_local
         self.last_sync_time = None
         self.shift_ended = False
         self._logout_in_progress = False
@@ -80,12 +89,18 @@ class EmployeeApp(QWidget):
         # Логика закрытия: None, "admin_logout", "user_close", "auto_logout"
         self._closing_reason = "user_close"  # по умолчанию
 
+        self._session_started_at = session_started_at
+        self.shift_start_time = self._get_local_session_start(self.shift_start_time)
         if session_id is not None:
             self.session_id = session_id
             self._continue_existing_session = True
         else:
-            self.session_id = self._generate_session_id()
+            self.session_id = session_state.generate_session_id(self.email)
             self._continue_existing_session = False
+            try:
+                session_state.set_session_id(self.session_id)
+            except Exception:
+                logger.debug("Unable to persist generated session id")
         self.status_buttons = {}
 
         self.login_was_performed = login_was_performed
@@ -108,9 +123,6 @@ class EmployeeApp(QWidget):
             "Group": self.group,
         }
 
-    def _generate_session_id(self) -> str:
-        return f"{self.email[:8]}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
     def _make_action_payload_from_row(self, row):
         # Порядок столбцов в logs:
         # 0:id 1:session_id 2:email 3:name 4:status 5:action_type 6:comment
@@ -128,6 +140,42 @@ class EmployeeApp(QWidget):
             "status_end_time": row[13],
             "reason": row[14] if len(row) > 14 else None,
         }
+
+    def _get_local_session_start(self, fallback: Optional[datetime] = None) -> datetime:
+        """Convert stored session start to local naive datetime for timers."""
+
+        fallback_dt = fallback or datetime.now()
+        raw_value = self._session_started_at
+        candidate: Optional[datetime]
+
+        if isinstance(raw_value, datetime):
+            candidate = raw_value
+        elif isinstance(raw_value, str):
+            raw_text = raw_value.strip()
+            if not raw_text:
+                return fallback_dt
+            try:
+                candidate = datetime.fromisoformat(raw_text)
+            except ValueError:
+                logger.debug("Invalid session start format: %s", raw_value)
+                return fallback_dt
+        else:
+            return fallback_dt
+
+        if candidate.tzinfo is not None:
+            try:
+                candidate = candidate.astimezone()
+            except Exception as exc:
+                logger.debug("Failed to convert session start timezone: %s", exc)
+                try:
+                    candidate = candidate.astimezone(timezone.utc)
+                except Exception:
+                    return fallback_dt
+
+        try:
+            return candidate.replace(tzinfo=None)
+        except Exception:
+            return fallback_dt
 
     def _send_action_to_sheets(self, record_id, user_group=None):
         threading.Thread(
@@ -173,8 +221,12 @@ class EmployeeApp(QWidget):
             )
 
     def _finish_and_send_previous_status(self):
-        prev_id = self.db.finish_last_status(self.email, self.session_id)
-        if prev_id:
+        prev_result = self.db.finish_last_status(self.email, self.session_id)
+        if isinstance(prev_result, tuple):
+            prev_id = prev_result[0]
+        else:
+            prev_id = prev_result
+        if prev_id and prev_id > 0:
             threading.Thread(
                 target=self._finish_and_send_previous_status_worker,
                 args=(prev_id,),
@@ -288,17 +340,11 @@ class EmployeeApp(QWidget):
                     )
                     return True, False
 
-                status = (
-                    (
-                        self.sheets_api.check_user_session_status(
-                            self.email, self.session_id
-                        )
-                        or ""
-                    )
-                    .strip()
-                    .lower()
+                raw_status = self.sheets_api.check_user_session_status(
+                    self.email, self.session_id
                 )
-                if status and status != "active":
+                status = normalize_session_status(raw_status)
+                if status and status != STATUS_ACTIVE:
                     logger.info(
                         "finish_active_session skipped: remote status %s for %s",
                         status,
@@ -351,28 +397,30 @@ class EmployeeApp(QWidget):
         try:
             self.db = LocalDB()
             if self.login_was_performed:
-                now = datetime.now().isoformat()
-                # Определяем тип действия: LOGIN только если это новая сессия
-                has_session = bool(self._continue_existing_session)
-                action_type = "STATUS_CHANGE" if has_session else "LOGIN"
-                comment = "Начало смены" if action_type == "LOGIN" else "Смена статуса"
+                if self._session_started_at:
+                    started_at_arg: datetime | str = self._session_started_at
+                else:
+                    started_dt = datetime.now(timezone.utc)
+                    started_at_arg = started_dt
+                    self._session_started_at = started_dt.isoformat()
 
-                # Используем сериализованную транзакцию для записи
-                with write_tx() as conn:
-                    record_id = self.db.log_action_tx(
-                        conn=conn,
-                        email=self.email,
-                        name=self.name,
-                        status=self.current_status,
-                        action_type=action_type,
-                        comment=comment,
-                        session_id=self.session_id,
-                        status_start_time=now,
-                        status_end_time=None,
-                        reason=None,
+                record_id, created = self.db.mark_session_active(
+                    self.session_id,
+                    email=self.email,
+                    name=self.name,
+                    status=STATUS_ACTIVE,
+                    started_at=started_at_arg,
+                    comment="Начало смены",
+                    user_group=self.group or None,
+                )
+                if created and record_id and record_id > 0:
+                    self._send_action_to_sheets(
+                        record_id, user_group=self.group or None
                     )
-                self.status_start_time = datetime.fromisoformat(now)
-                self._send_action_to_sheets(record_id)
+                self.shift_start_time = self._get_local_session_start(
+                    self.shift_start_time
+                )
+                self.status_start_time = datetime.now()
         except LocalDBError as e:
             logger.error(f"Ошибка инициализации БД: {e}")
             QMessageBox.critical(
@@ -481,18 +529,17 @@ class EmployeeApp(QWidget):
         True — если по (email, session_id) в ActiveSessions статус 'finished', 'kicked' или 'force_logout'.
         """
         try:
-            status = self.sheets_api.check_user_session_status(
-                self.email, self.session_id
+            status = normalize_session_status(
+                self.sheets_api.check_user_session_status(self.email, self.session_id)
             )
-            if isinstance(status, dict):
-                st = (status.get("Status") or "").strip().lower()
-            else:
-                st = str(status or "").strip().lower()
-            if st:
+            if status:
                 logger.debug(
-                    f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}"
+                    "[ACTIVESESSIONS] status for %s/%s: %s",
+                    self.email,
+                    self.session_id,
+                    status,
                 )
-            return st in {"finished", "kicked", "force_logout"}
+            return status in {STATUS_LOGOUT, STATUS_FORCE_LOGOUT}
         except Exception as e:
             logger.debug(f"_is_session_finished_remote error: {e}")
         return False
@@ -546,7 +593,7 @@ class EmployeeApp(QWidget):
         try:
             record_id = self._log_shift_end(
                 "Сессия завершена администратором",
-                reason="FORCE_LOGOUT",
+                reason=STATUS_FORCE_LOGOUT,
                 sync_to_sheets=False,
             )
         except Exception as exc:
@@ -694,39 +741,24 @@ class EmployeeApp(QWidget):
     def _log_shift_end(
         self, comment: str, reason: str = "LOGOUT", sync_to_sheets: bool = True
     ) -> int:
-        now = datetime.now().isoformat()
-        status_value = reason or "LOGOUT"
+        status_value = reason or STATUS_LOGOUT
         record_id = -1
         try:
-            with write_tx() as conn:
-                # Завершаем последний статус
-                try:
-                    self.db.finish_last_status_tx(
-                        conn, self.email, self.session_id, now, reason=status_value
-                    )
-                except TypeError:
-                    self.db.finish_last_status_tx(
-                        conn, self.email, self.session_id, now
-                    )
-
-                # Логируем завершение смены
-                record_id = self.db.log_action_tx(
-                    conn=conn,
-                    email=self.email,
-                    name=self.name,
-                    status=status_value,
-                    action_type="LOGOUT",
-                    comment=comment,
-                    session_id=self.session_id,
-                    status_start_time=now,
-                    status_end_time=now,
-                    reason=status_value,
-                    user_group=self.group,
-                )
+            logout_moment = datetime.now(timezone.utc)
+            record_id, created = self.db.finish_session(
+                self.session_id,
+                email=self.email,
+                name=self.name,
+                status=status_value,
+                comment=comment,
+                reason=status_value,
+                logout_time=logout_moment,
+                user_group=self.group or None,
+            )
             if record_id and record_id > 0:
-                if sync_to_sheets:
+                if sync_to_sheets and created:
                     self._send_action_to_sheets(record_id, user_group=self.group)
-                else:
+                elif not sync_to_sheets:
                     try:
                         self.db.mark_actions_synced([record_id])
                     except Exception as sync_exc:
@@ -735,7 +767,7 @@ class EmployeeApp(QWidget):
                             record_id,
                             sync_exc,
                         )
-            return record_id
+            return record_id if record_id is not None else -1
         except Exception as e:
             logger.error(f"Ошибка записи завершения смены: {e}")
             raise
@@ -754,7 +786,7 @@ class EmployeeApp(QWidget):
         self._notify_session_finish_requested("local_logout")
 
         try:
-            self._log_shift_end(comment, reason="LOGOUT", sync_to_sheets=True)
+            self._log_shift_end(comment, reason=STATUS_LOGOUT, sync_to_sheets=True)
         except Exception:
             self._logout_in_progress = False
             self._closing_reason = "user_close"

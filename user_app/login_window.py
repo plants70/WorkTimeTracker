@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import re
 import sys
@@ -34,6 +35,8 @@ except ImportError:
         from sheets_api import get_sheets_api
         from user_app import session as session_state
         from user_app.db_local import LocalDB
+
+from consts import STATUS_ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -379,13 +382,36 @@ class LoginWindow(QDialog):
                     )
 
                 # 2. Создаем новую сессию
-                session_id = f"{email[:8]}_{QDateTime.currentDateTime().toString('yyyyMMddHHmmss')}"
+                login_dt = dt.datetime.now(dt.UTC)
+                session_id = session_state.generate_session_id(email, login_dt)
+                login_time_iso = login_dt.isoformat()
                 self.sheets_api.set_active_session(
                     email,
                     normalized_user_data.get("name", ""),
                     session_id,
-                    QDateTime.currentDateTime().toString(Qt.ISODate),
+                    login_time_iso,
                 )
+                try:
+                    db = LocalDB()
+                    db.mark_session_active(
+                        session_id,
+                        email=normalized_user_data.get("email", email),
+                        name=normalized_user_data.get("name", email),
+                        status=STATUS_ACTIVE,
+                        started_at=login_dt,
+                        comment="Начало смены",
+                        user_group=normalized_user_data.get("group") or None,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Не удалось зафиксировать локальную сессию %s: %s",
+                        session_id,
+                        exc,
+                    )
+                try:
+                    session_state.set_session_id(session_id)
+                except Exception:
+                    logger.debug("Не удалось сохранить session_id в session_state")
                 login_was_performed = True
                 # --- КОНЕЦ ---
 
@@ -399,6 +425,7 @@ class LoginWindow(QDialog):
                     "group": normalized_user_data.get("group", ""),
                     "login_was_performed": login_was_performed,
                     "session_id": session_id,
+                    "session_started_at": login_time_iso,
                 }
 
                 # сохраняем email текущего пользователя для всех подсистем

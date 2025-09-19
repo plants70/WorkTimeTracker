@@ -19,6 +19,8 @@ import gspread
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.service_account import Credentials
 
+from consts import normalize_session_status
+
 logger = logging.getLogger(
     "sheets_api"
 )  # никаких handlers здесь — конфиг только в приложении
@@ -1156,18 +1158,46 @@ class SheetsAPI:
             return False
 
     def check_user_session_status(self, email: str, session_id: str) -> str | None:
-        """Возвращает статус ('active'/'finished'/'kicked'/...) или None."""
+        """Возвращает нормализованный статус сессии или None."""
+
         from config import ACTIVE_SESSIONS_SHEET
+
+        sid = str(session_id or "").strip()
+        if not sid:
+            return None
 
         ws = self._get_ws(ACTIVE_SESSIONS_SHEET)
         table = self._read_table(ws)
         em = (email or "").strip().lower()
-        sid = str(session_id or "").strip()
-        for r in table:
-            if (r.get("Email", "") or "").strip().lower() == em and str(
-                r.get("SessionID", "")
-            ).strip() == sid:
-                return (r.get("Status") or "").strip().lower()
+        fallback_row: dict[str, Any] | None = None
+        fallback_row_idx: int | None = None
+
+        for row_idx, row in enumerate(table, start=2):
+            row_sid = str(row.get("SessionID", "") or "").strip()
+            if row_sid == sid:
+                status_value = normalize_session_status(row.get("Status"))
+                logger.info(
+                    "ActiveSessions status for session=%s -> %s",
+                    sid,
+                    status_value or "<unknown>",
+                )
+                return status_value
+            if em and (row.get("Email", "") or "").strip().lower() == em:
+                fallback_row = row
+                fallback_row_idx = row_idx
+
+        if fallback_row:
+            status_value = normalize_session_status(fallback_row.get("Status"))
+            logger.info(
+                "ActiveSessions status for session=%s (email=%s row=%s) -> %s",
+                sid,
+                em or "<unknown>",
+                fallback_row_idx if fallback_row_idx is not None else "<unknown>",
+                status_value or "<unknown>",
+            )
+            return status_value
+
+        logger.info("ActiveSessions status for session=%s -> not found", sid)
         return None
 
     def ack_remote_command(self, email: str, session_id: str) -> bool:

@@ -1,6 +1,7 @@
 # user_app/session.py
 from __future__ import annotations
 
+import datetime as dt
 import threading
 from typing import Optional
 
@@ -30,3 +31,11 @@ def set_session_id(session_id: str) -> None:
 def get_session_id() -> Optional[str]:
     with _lock:
         return _current_session_id
+
+
+def generate_session_id(email: str, moment: dt.datetime | None = None) -> str:
+    """Generate a canonical session identifier (email + UTC timestamp)."""
+
+    timestamp = (moment or dt.datetime.now(dt.UTC)).strftime("%Y%m%d%H%M%S")
+    normalized_email = (email or "").strip().lower()
+    return f"{normalized_email}_{timestamp}"
