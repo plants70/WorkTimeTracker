@@ -20,6 +20,7 @@ from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.service_account import Credentials
 
 from consts import normalize_session_status
+from telemetry import trace_time
 
 logger = logging.getLogger(
     "sheets_api"
@@ -115,7 +116,8 @@ class SheetsAPI:
     """Обёртка над gspread с ретраями, кэшем и batch-операциями."""
 
     def __init__(self):
-        self._initialize()
+        with trace_time("sheets_api_init"):
+            self._initialize()
 
     def _initialize(self):
         from config import get_credentials_file
