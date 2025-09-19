@@ -69,6 +69,15 @@ class UserAPI:
         st = self.sheets.check_user_session_status(email=email, session_id=session_id)
         return st in ("kicked", "finished")
 
+    def get_session_status(self, email: str, session_id: str) -> str | None:
+        try:
+            return self.sheets.check_user_session_status(
+                email=email, session_id=session_id
+            )
+        except Exception as exc:  # pragma: no cover - сетевые ошибки не критичны
+            logger.debug("get_session_status failed for %s: %s", session_id, exc)
+            return None
+
     # ---- WorkLog ----
     def log_actions(
         self, actions: list[dict], email: str, user_group: str | None = None

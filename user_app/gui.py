@@ -1,6 +1,7 @@
 import logging
 import sys
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
@@ -11,6 +12,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from config import MAX_COMMENT_LENGTH, STATUS_GROUPS
 from sheets_api import SheetsAPIError, get_sheets_api
 from user_app.db_local import LocalDB, LocalDBError, write_tx
+from user_app.signals import SessionSignals
 
 try:
     from sync.notifications import Notifier
@@ -52,6 +54,8 @@ class EmployeeApp(QWidget):
         on_logout_callback: Optional[Callable] = None,
         session_id: Optional[str] = None,
         login_was_performed: bool = True,
+        session_signals: Optional[SessionSignals] = None,
+        on_session_finish_requested: Optional[Callable[[str], None]] = None,
     ):
         super().__init__()
         self.email = email
@@ -61,12 +65,15 @@ class EmployeeApp(QWidget):
         self.shift_hours = shift_hours
         self.telegram_login = telegram_login
         self.on_logout_callback = on_logout_callback
+        self.session_signals = session_signals
+        self.on_session_finish_requested = on_session_finish_requested
 
         self.current_status = "В работе"
         self.status_start_time = datetime.now()
         self.shift_start_time = datetime.now()
         self.last_sync_time = None
         self.shift_ended = False
+        self._logout_in_progress = False
 
         # Логика закрытия: None, "admin_logout", "user_close", "auto_logout"
         self._closing_reason = "user_close"  # по умолчанию
@@ -205,6 +212,139 @@ class EmployeeApp(QWidget):
                 "Оффлайн режим", "Предыдущий статус будет синхронизирован позже."
             )
 
+    def _notify_session_finish_requested(self, reason: str) -> None:
+        if callable(self.on_session_finish_requested):
+            try:
+                self.on_session_finish_requested(reason)
+            except Exception as exc:
+                logger.debug("on_session_finish_requested failed: %s", exc)
+
+    def _disable_post_logout(self) -> None:
+        self.shift_ended = True
+        self.finish_btn.setEnabled(False)
+        for btn in self.status_buttons.values():
+            btn.setEnabled(False)
+
+    def _emit_session_finished(self, reason: str) -> None:
+        self._logout_in_progress = False
+        if self.session_signals:
+            try:
+                self.session_signals.sessionFinished.emit(reason)
+                return
+            except Exception as exc:
+                logger.debug("sessionFinished emit failed: %s", exc)
+        if callable(self.on_logout_callback):
+            try:
+                self.on_logout_callback(reason)
+            except TypeError:
+                self.on_logout_callback()
+
+    def _start_logout_worker(self, mode: str) -> None:
+        threading.Thread(
+            target=self._logout_worker,
+            args=(mode,),
+            daemon=True,
+        ).start()
+
+    def _logout_worker(self, mode: str) -> None:
+        reason = "local_logout"
+        try:
+            if mode == "local":
+                success, offline = self._finish_remote_session_with_retry()
+                if offline and not success:
+                    reason = "local_logout_offline"
+                else:
+                    reason = "local_logout"
+            elif mode == "remote":
+                self._ack_remote_command_with_retry()
+                reason = "remote_force_logout"
+            else:
+                reason = mode
+        finally:
+            self._emit_session_finished(reason)
+
+    def _finish_remote_session_with_retry(self) -> tuple[bool, bool]:
+        """Возвращает (success, offline_hint)."""
+
+        if not self.sheets_api:
+            return False, False
+
+        last_exception: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                logout_time = datetime.now().isoformat()
+                ok = self.sheets_api.finish_active_session(
+                    self.email,
+                    self.session_id,
+                    logout_time,
+                )
+                if ok:
+                    logger.info(
+                        "finish_active_session succeeded for %s (attempt %s)",
+                        self.session_id,
+                        attempt,
+                    )
+                    return True, False
+
+                status = (
+                    (
+                        self.sheets_api.check_user_session_status(
+                            self.email, self.session_id
+                        )
+                        or ""
+                    )
+                    .strip()
+                    .lower()
+                )
+                if status and status != "active":
+                    logger.info(
+                        "finish_active_session skipped: remote status %s for %s",
+                        status,
+                        self.session_id,
+                    )
+                    return True, False
+            except Exception as exc:
+                last_exception = exc
+                logger.warning(
+                    "finish_active_session attempt %s failed: %s",
+                    attempt,
+                    exc,
+                )
+            time.sleep(2)
+
+        offline = last_exception is not None
+        if offline:
+            logger.warning(
+                "finish_active_session failed after retries for %s: %s",
+                self.session_id,
+                last_exception,
+            )
+        else:
+            logger.warning(
+                "finish_active_session returned False for %s after retries",
+                self.session_id,
+            )
+        return False, offline
+
+    def _ack_remote_command_with_retry(self) -> None:
+        if not hasattr(self.sheets_api, "ack_remote_command"):
+            return
+        for attempt in range(1, 4):
+            try:
+                ok = self.sheets_api.ack_remote_command(
+                    email=self.email, session_id=self.session_id
+                )
+                if ok:
+                    logger.info(
+                        "ACK remote command sent for %s on attempt %s",
+                        self.session_id,
+                        attempt,
+                    )
+                    return
+            except Exception as exc:
+                logger.debug("ack_remote_command attempt %s failed: %s", attempt, exc)
+            time.sleep(2)
+
     def _init_db(self):
         try:
             self.db = LocalDB()
@@ -336,16 +476,21 @@ class EmployeeApp(QWidget):
 
     def _is_session_finished_remote(self) -> bool:
         """
-        True — если по (email, session_id) в ActiveSessions статус 'finished' или 'kicked'.
+        True — если по (email, session_id) в ActiveSessions статус 'finished', 'kicked' или 'force_logout'.
         """
         try:
-            row = self.sheets_api.check_user_session_status(self.email, self.session_id)
-            if isinstance(row, dict):
-                st = (row.get("Status") or "").strip().lower()
+            status = self.sheets_api.check_user_session_status(
+                self.email, self.session_id
+            )
+            if isinstance(status, dict):
+                st = (status.get("Status") or "").strip().lower()
+            else:
+                st = str(status or "").strip().lower()
+            if st:
                 logger.debug(
                     f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}"
                 )
-                return st in ("finished", "kicked")
+            return st in {"finished", "kicked", "force_logout"}
         except Exception as e:
             logger.debug(f"_is_session_finished_remote error: {e}")
         return False
@@ -371,25 +516,21 @@ class EmployeeApp(QWidget):
             logger.info(
                 f"[AUTO_LOGOUT_DETECT] В ActiveSessions статус НЕ active для {self.email}, session={self.session_id}"
             )
-            self._closing_reason = "auto_logout"
-            self.finish_btn.setEnabled(False)
-            for btn in self.status_buttons.values():
-                btn.setEnabled(False)
-            Notifier.show("WorkLog", "Смена завершена администратором.")
-            try:
-                self._log_shift_end(
-                    "Разлогинен администратором (удалённо)", reason="admin"
-                )
-            except Exception as e:
-                logger.error(f"Ошибка при автологаутах по сигналу из Sheets: {e}")
-            self.shift_ended = True
-            self.close()
+            self.force_logout_by_admin()
+            return
 
     def force_logout_by_admin(self):
         """
         Слот под SyncSignals.force_logout.
         Вызывается без аргументов. Показываем предупреждение и закрываемся.
         """
+        if self._logout_in_progress:
+            return
+
+        self._logout_in_progress = True
+        self._closing_reason = "remote_force_logout"
+        self._notify_session_finish_requested("remote_force_logout")
+
         try:
             QMessageBox.warning(
                 self,
@@ -398,14 +539,30 @@ class EmployeeApp(QWidget):
             )
         except Exception:
             pass
-        self._closing_reason = "admin_logout"
-        # Передаём reason в on_logout_callback, если он его принимает
-        if callable(self.on_logout_callback):
+
+        record_id = -1
+        try:
+            record_id = self._log_shift_end(
+                "Сессия завершена администратором",
+                reason="FORCE_LOGOUT",
+                sync_to_sheets=False,
+            )
+        except Exception as exc:
+            logger.error(f"Ошибка фиксации принудительного выхода: {exc}")
+
+        if record_id and record_id > 0:
             try:
-                self.on_logout_callback(self._closing_reason)
-            except TypeError:
-                self.on_logout_callback()
-        self.close()
+                self.db.mark_actions_synced([record_id])
+            except Exception as sync_exc:
+                logger.debug(
+                    "Не удалось пометить запись FORCE_LOGOUT синхронизированной: %s",
+                    sync_exc,
+                )
+
+        self._disable_post_logout()
+        self.comment_input.clear()
+        Notifier.show("WorkLog", "Сессия завершается администратором")
+        self._start_logout_worker("remote")
 
     def _update_info_text(self):
         info_text = (
@@ -532,33 +689,57 @@ class EmployeeApp(QWidget):
         self._update_info_text()
         Notifier.show("WorkLog", f"Статус изменён на: {new_status}")
 
-    def _log_shift_end(self, comment: str, reason: str = "user"):
+    def _log_shift_end(
+        self, comment: str, reason: str = "LOGOUT", sync_to_sheets: bool = True
+    ) -> int:
         now = datetime.now().isoformat()
+        status_value = reason or "LOGOUT"
+        record_id = -1
         try:
             with write_tx() as conn:
                 # Завершаем последний статус
-                self.db.finish_last_status_tx(conn, self.email, self.session_id, now)
+                try:
+                    self.db.finish_last_status_tx(
+                        conn, self.email, self.session_id, now, reason=status_value
+                    )
+                except TypeError:
+                    self.db.finish_last_status_tx(
+                        conn, self.email, self.session_id, now
+                    )
 
                 # Логируем завершение смены
                 record_id = self.db.log_action_tx(
                     conn=conn,
                     email=self.email,
                     name=self.name,
-                    status="LOGOUT",
+                    status=status_value,
                     action_type="LOGOUT",
                     comment=comment,
                     session_id=self.session_id,
                     status_start_time=now,
                     status_end_time=now,
-                    reason=reason,
+                    reason=status_value,
+                    user_group=self.group,
                 )
-            self._send_action_to_sheets(record_id, user_group=self.group)
+            if record_id and record_id > 0:
+                if sync_to_sheets:
+                    self._send_action_to_sheets(record_id, user_group=self.group)
+                else:
+                    try:
+                        self.db.mark_actions_synced([record_id])
+                    except Exception as sync_exc:
+                        logger.debug(
+                            "mark_actions_synced failed for record %s: %s",
+                            record_id,
+                            sync_exc,
+                        )
+            return record_id
         except Exception as e:
             logger.error(f"Ошибка записи завершения смены: {e}")
             raise
 
     def finish_shift(self):
-        if self.shift_ended:
+        if self.shift_ended or self._logout_in_progress:
             QMessageBox.information(self, "Информация", "Смена уже завершена")
             return
 
@@ -566,77 +747,22 @@ class EmployeeApp(QWidget):
         if not comment:
             comment = "Завершение смены"
 
+        self._logout_in_progress = True
+        self._closing_reason = "local_logout"
+        self._notify_session_finish_requested("local_logout")
+
         try:
-            self._log_shift_end(comment)
+            self._log_shift_end(comment, reason="LOGOUT", sync_to_sheets=True)
         except Exception:
+            self._logout_in_progress = False
+            self._closing_reason = "user_close"
             QMessageBox.critical(self, "Ошибка", "Не удалось завершить смену")
             return
 
-        self.shift_ended = True
-        self.finish_btn.setEnabled(False)
-        for btn in self.status_buttons.values():
-            btn.setEnabled(False)
-
-        # === Обновление ActiveSessions ===
-        try:
-            lt = datetime.now().isoformat()
-            ok = self.sheets_api.finish_active_session(self.email, self.session_id, lt)
-            logger.info(
-                f"[LOGOUT/ActiveSessions] finish_active_session({self.email}, {self.session_id}) -> {ok}"
-            )
-            if not ok:
-                # Фоллбэк: обновим ПОСЛЕДНЮЮ активную строку по email (если есть) как 'finished'
-                try:
-                    # Универсальный путь через _update_session_status если доступен
-                    if hasattr(self.sheets_api, "_update_session_status"):
-                        ok2 = self.sheets_api._update_session_status(
-                            self.email, self.session_id, "finished", lt
-                        )
-                        logger.warning(
-                            f"[LOGOUT/ActiveSessions] fallback _update_session_status -> {ok2}"
-                        )
-                        ok = ok or ok2
-                    else:
-                        ok2 = self.sheets_api.kick_active_session(
-                            session_id=self.session_id,
-                            email=self.email,
-                            logout_time=lt,
-                        )  # меняет статус, но приемлемо
-                        logger.warning(
-                            f"[LOGOUT/ActiveSessions] fallback kick_active_session -> {ok2}"
-                        )
-                        ok = ok or ok2
-                except Exception as e2:
-                    logger.error(f"[LOGOUT/ActiveSessions] fallback error: {e2}")
-
-            # Верификация статуса
-            try:
-                st = (
-                    (
-                        self.sheets_api.check_user_session_status(
-                            self.email, self.session_id
-                        )
-                        or ""
-                    )
-                    .strip()
-                    .lower()
-                )
-                logger.info(f"[LOGOUT/ActiveSessions] post-check status: {st}")
-                if st == "active":
-                    # одна повторная попытка
-                    ok3 = self.sheets_api.finish_active_session(
-                        self.email, self.session_id, lt
-                    )
-                    logger.warning(
-                        f"[LOGOUT/ActiveSessions] repeat finish_active_session -> {ok3}"
-                    )
-            except Exception as e3:
-                logger.warning(f"[LOGOUT/ActiveSessions] status verify error: {e3}")
-        except Exception as e:
-            logger.error(f"Ошибка завершения сессии в ActiveSessions: {e}")
-
-        Notifier.show("WorkLog", "Смена завершена")
-        QMessageBox.information(self, "Успех", "Смена завершена успешно")
+        self._disable_post_logout()
+        self.comment_input.clear()
+        Notifier.show("WorkLog", "Идёт завершение смены")
+        self._start_logout_worker("local")
 
     def closeEvent(self, event):
         if not self.shift_ended:

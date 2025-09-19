@@ -1,5 +1,6 @@
 # user_app/main.py
 import atexit
+import datetime as dt
 import logging
 import sys
 import threading
@@ -28,9 +29,10 @@ from config import (
 from logging_setup import setup_logging
 from notifications.engine import start_background_poller
 from sheets_api import SheetsAPI  # Явный импорт класса SheetsAPI
-from user_app import db_local  # ← добавили импорт
+from user_app import db_local
+from user_app import session as session_state  # ← добавили импорт
 from user_app.api import UserAPI
-from user_app.signals import SyncSignals
+from user_app.signals import SessionSignals, SyncSignals
 
 atexit.register(db_local.close_connection)
 
@@ -48,7 +50,13 @@ class ApplicationSignals(QObject):
 
 
 def _hb_loop(
-    api: UserAPI, session_id: str, stop_evt: threading.Event, period_sec: int
+    api: UserAPI,
+    email: str | None,
+    session_id: str,
+    stop_evt: threading.Event,
+    period_sec: int,
+    session_signals: "SessionSignals" | None = None,
+    suppress_evt: threading.Event | None = None,
 ) -> None:
     logger = logging.getLogger(__name__)
 
@@ -59,9 +67,40 @@ def _hb_loop(
     if period <= 0:
         period = 60
 
+    active_statuses = {"active", "в работе"}
+    remote_emitted = False
+
+    def _check_remote() -> None:
+        nonlocal remote_emitted
+        if remote_emitted or not session_signals or not email:
+            return
+        if suppress_evt and suppress_evt.is_set():
+            return
+        try:
+            status = (
+                (api.get_session_status(email=email, session_id=session_id) or "")
+                .strip()
+                .lower()
+            )
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - доп. страховка от неожиданных исключений
+            logger.debug("Heartbeat remote check failed: %s", exc)
+            return
+        if status and status not in active_statuses:
+            remote_emitted = True
+            logger.info(
+                "Heartbeat detected non-active status (session=%s, status=%s)",
+                session_id,
+                status,
+            )
+            session_signals.sessionFinished.emit("remote_force_logout")
+            stop_evt.set()
+
     def _send_once() -> None:
         try:
             api.heartbeat_session(session_id=session_id)
+            _check_remote()
         except Exception as exc:
             logger.warning("Heartbeat thread error for session %s: %s", session_id, exc)
 
@@ -84,12 +123,16 @@ class ApplicationManager(QObject):
         self.login_window = None
         self.main_window = None
         self.signals = ApplicationSignals()
+        self.session_signals = SessionSignals()
+        self.session_signals.sessionFinished.connect(self._handle_session_finished)
 
         self.sync_thread: QThread | None = None
         self.sync_worker: SyncManager | None = None
         self.sync_signals = (
             SyncSignals()
         )  # сигналы доступны и для GUI, и для SyncManager
+        self._sync_running = False
+        self._sync_offline_mode = False
 
         sys.excepthook = self.handle_uncaught_exception
 
@@ -98,6 +141,10 @@ class ApplicationManager(QObject):
         self._heartbeat_thread: threading.Thread | None = None
         self._heartbeat_period = HEARTBEAT_PERIOD_SEC
         self._current_session_id: str | None = None
+        self._current_user_email: str | None = None
+        self._pending_finish_reason: str | None = None
+        self._returning_to_login = False
+        self._suppress_remote_checks = threading.Event()
 
         offline_mode = False
         try:
@@ -179,7 +226,15 @@ class ApplicationManager(QObject):
 
         thread = threading.Thread(
             target=_hb_loop,
-            args=(self.user_api, session_id, stop_evt, period_value),
+            args=(
+                self.user_api,
+                self._current_user_email,
+                session_id,
+                stop_evt,
+                period_value,
+                self.session_signals,
+                self._suppress_remote_checks,
+            ),
             daemon=True,
             name="session-heartbeat",
         )
@@ -232,8 +287,31 @@ class ApplicationManager(QObject):
             )  # run() есть в SyncManager
             self.sync_thread.start()
             logger.info("Sync service thread started (offline_mode=%s)", offline_mode)
+            self._sync_running = True
+            self._sync_offline_mode = offline_mode
         except Exception as e:
             logger.error(f"Failed to start sync service: {e}")
+
+    def _stop_sync_service(self) -> None:
+        logger = logging.getLogger(__name__)
+        if not self.sync_thread and not self.sync_worker:
+            self._sync_running = False
+            return
+
+        try:
+            if self.sync_worker:
+                try:
+                    self.sync_worker.stop()
+                except Exception as exc:  # pragma: no cover - безопасная остановка
+                    logger.debug("Sync worker stop error: %s", exc)
+        finally:
+            if self.sync_thread and self.sync_thread.isRunning():
+                self.sync_thread.quit()
+                self.sync_thread.wait(2000)
+
+        self.sync_thread = None
+        self.sync_worker = None
+        self._sync_running = False
 
     # --- UI потоки ---
     def show_login_window(self):
@@ -267,6 +345,9 @@ class ApplicationManager(QObject):
             if "login_was_performed" in user_data:
                 login_was_performed = bool(user_data["login_was_performed"])
 
+            self._suppress_remote_checks.clear()
+            self._pending_finish_reason = None
+
             def on_logout_wrapper(reason: str | None = None):
                 """
                 Колбэк из EmployeeApp при закрытии/логауте.
@@ -274,6 +355,8 @@ class ApplicationManager(QObject):
                 Сейчас логика простая — просто корректно завершаем приложение.
                 При желании здесь можно добавить отдельную запись в логи/Sheets.
                 """
+                if reason == "return_to_login":
+                    return
                 self.quit_application()
 
             # создаём главное окно как раньше
@@ -287,6 +370,8 @@ class ApplicationManager(QObject):
                 session_id=session_id,
                 login_was_performed=login_was_performed,
                 group=user_data.get("group", ""),
+                session_signals=self.session_signals,
+                on_session_finish_requested=self.handle_session_finish_requested,
             )
             self.main_window.show()
 
@@ -298,7 +383,17 @@ class ApplicationManager(QObject):
             logger.info("force_logout сигнал подключён к force_logout_by_admin")
 
             actual_session_id = getattr(self.main_window, "session_id", session_id)
+            self._current_session_id = actual_session_id
+            self._current_user_email = user_data.get("email")
             self._start_session_heartbeat(actual_session_id)
+            try:
+                session_state.set_session_id(actual_session_id or "")
+                session_state.set_user_email(self._current_user_email or "")
+            except Exception:
+                logger.debug("Unable to persist session id in session_state")
+
+            if not self._sync_running:
+                self._start_sync_service(offline_mode=self._sync_offline_mode)
 
         except Exception as e:
             self._show_error("Main Window Error", f"Cannot show main window: {e}")
@@ -307,11 +402,206 @@ class ApplicationManager(QObject):
     def handle_login_failed(self, message: str):
         self._show_error("Login Failed", message)
 
+    def handle_session_finish_requested(self, reason: str):
+        logger = logging.getLogger(__name__)
+        normalized = (reason or "").strip().lower()
+        self._pending_finish_reason = normalized
+        if normalized.startswith("local"):
+            logger.info("Session finish requested (local)")
+            self._suppress_remote_checks.set()
+        elif normalized.startswith("remote"):
+            logger.info("Session forced remotely (admin)")
+        else:
+            logger.info("Session finish requested (%s)", normalized or "unknown")
+        self._stop_session_heartbeat()
+
+    def _handle_session_finished(self, reason: str) -> None:
+        logger = logging.getLogger(__name__)
+        normalized = (reason or "").strip().lower() or "local_logout"
+        pending = (self._pending_finish_reason or "").strip().lower()
+        if normalized.startswith("remote") and not pending.startswith("remote"):
+            logger.info("Session forced remotely (admin)")
+        if normalized.startswith("local") and not pending.startswith("local"):
+            logger.info("Session finish requested (local)")
+        self.return_to_login(normalized)
+
+    def _finalize_local_session(self, reason: str) -> None:
+        logger = logging.getLogger(__name__)
+        window = self.main_window
+        email = getattr(window, "email", None) or self._current_user_email
+        session_id = getattr(window, "session_id", None) or self._current_session_id
+        if not email or not session_id:
+            return
+
+        status_value = "FORCE_LOGOUT" if reason.startswith("remote") else "LOGOUT"
+        comment = (
+            "Сессия завершена администратором"
+            if reason.startswith("remote")
+            else "Завершение смены"
+        )
+
+        try:
+            db = db_local.LocalDB()
+        except Exception as exc:
+            logger.debug("LocalDB unavailable on finalize: %s", exc)
+            return
+
+        record_id: int | None = None
+        try:
+            with db_local.write_tx() as conn:
+                try:
+                    db.finish_last_status_tx(
+                        conn,
+                        email,
+                        session_id,
+                        reason=status_value,
+                    )
+                except TypeError:
+                    db.finish_last_status_tx(conn, email, session_id)
+
+                if not db.check_existing_logout(email, session_id):
+                    now_iso = dt.datetime.now(dt.UTC).isoformat()
+                    name_value = getattr(window, "name", "") or email
+                    group_value = getattr(window, "group", None)
+                    record_id = db.log_action_tx(
+                        conn=conn,
+                        email=email,
+                        name=name_value,
+                        status=status_value,
+                        action_type="LOGOUT",
+                        comment=comment,
+                        session_id=session_id,
+                        status_start_time=now_iso,
+                        status_end_time=now_iso,
+                        reason=status_value,
+                        user_group=group_value,
+                    )
+        except Exception as exc:
+            logger.warning(
+                "Finalize local session failed (session=%s): %s", session_id, exc
+            )
+            return
+
+        if reason.startswith("remote") and record_id and record_id > 0:
+            try:
+                db.mark_actions_synced([record_id])
+            except Exception as exc:
+                logger.debug("mark_actions_synced failed for %s: %s", record_id, exc)
+
+    def _ack_remote_command_async(self, email: str, session_id: str) -> None:
+        if not hasattr(self.sheets_api, "ack_remote_command"):
+            return
+
+        logger = logging.getLogger(__name__)
+
+        def _worker() -> None:
+            try:
+                ok = self.sheets_api.ack_remote_command(
+                    email=email, session_id=session_id
+                )
+                logger.info("ACK remote command for session %s -> %s", session_id, ok)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to ACK remote command (session=%s, email=%s): %s",
+                    session_id,
+                    email,
+                    exc,
+                )
+
+        threading.Thread(target=_worker, name="remote-ack", daemon=True).start()
+
+    def _show_logout_message(self, reason: str) -> None:
+        reason_key = (reason or "").strip().lower()
+        messages = {
+            "local_logout": "Смена завершена.",
+            "local_logout_offline": "Смена будет завершена при восстановлении сети.",
+            "remote_force_logout": "Сессия завершена администратором.",
+        }
+        message = messages.get(reason_key)
+        if not message:
+            return
+
+        try:
+            if reason_key.startswith("remote"):
+                QMessageBox.warning(None, "Смена", message)
+            else:
+                QMessageBox.information(None, "Смена", message)
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - показ сообщения может не удаться в headless
+            logging.getLogger(__name__).debug("Failed to show logout message: %s", exc)
+
     # --- Общее ---
     def _show_error(self, title: str, message: str):
         QMessageBox.critical(None, title, message)
         logger = logging.getLogger(__name__)
         logger.error("%s: %s", title, message)
+
+    def return_to_login(self, reason: str) -> None:
+        logger = logging.getLogger(__name__)
+        normalized = (reason or "").strip().lower() or "local_logout"
+        if self._returning_to_login:
+            logger.debug(
+                "Return to login already in progress (skip reason=%s)", normalized
+            )
+            return
+
+        self._returning_to_login = True
+        try:
+            logger.info("Return to login (reason=%s)", normalized)
+            self._stop_session_heartbeat()
+            self._finalize_local_session(normalized)
+
+            if (
+                normalized.startswith("remote")
+                and self._current_user_email
+                and self._current_session_id
+            ):
+                self._ack_remote_command_async(
+                    self._current_user_email,
+                    self._current_session_id,
+                )
+
+            self._stop_sync_service()
+
+            try:
+                session_state.set_session_id("")
+                session_state.set_user_email("")
+            except Exception:
+                logger.debug("Unable to reset session state")
+
+            self._pending_finish_reason = None
+            self._suppress_remote_checks.clear()
+
+            if self.main_window:
+                try:
+                    setattr(self.main_window, "_closing_reason", "return_to_login")
+                except Exception:
+                    pass
+                try:
+                    self.main_window.on_logout_callback = None
+                except Exception:
+                    pass
+                try:
+                    self.main_window.close()
+                except Exception as exc:
+                    logger.error("Error on main_window.close(): %s", exc)
+                self.main_window = None
+
+            if self.login_window:
+                try:
+                    self.login_window.close()
+                except Exception as exc:
+                    logger.debug("Error closing login window before restart: %s", exc)
+                self.login_window = None
+
+            self._current_session_id = None
+            self._current_user_email = None
+
+            self.show_login_window()
+            self._show_logout_message(normalized)
+        finally:
+            self._returning_to_login = False
 
     def handle_uncaught_exception(self, exc_type, exc_value, exc_traceback):
         logger = logging.getLogger(__name__)
@@ -346,20 +636,9 @@ class ApplicationManager(QObject):
             self.login_window = None
 
         # останавливаем сервис синхронизации
-        try:
-            if self.sync_worker:
-                try:
-                    self.sync_worker.stop()
-                except Exception:
-                    pass
-            if self.sync_thread and self.sync_thread.isRunning():
-                self.sync_thread.quit()
-                self.sync_thread.wait(2000)
-        finally:
-            from user_app import db_local
-
-            db_local.close_connection()
-            self.app.quit()
+        self._stop_sync_service()
+        db_local.close_connection()
+        self.app.quit()
 
     # точка входа UI
     def run(self):

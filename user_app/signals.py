@@ -11,3 +11,10 @@ class SyncSignals(QObject):
     force_logout = pyqtSignal()
     # Телеметрия синхронизации (обновляется после каждого цикла)
     sync_status_updated = pyqtSignal(dict)
+
+
+class SessionSignals(QObject):
+    """Сигналы жизненного цикла пользовательской сессии."""
+
+    # Причина завершения передаётся строкой (local_logout, remote_force_logout, ...)
+    sessionFinished = pyqtSignal(str)
