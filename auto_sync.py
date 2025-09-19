@@ -9,7 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from threading import Event, Lock, RLock, Thread
 from time import monotonic
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
+
+from telemetry import trace_time
 
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -70,7 +72,6 @@ except Exception:
 # Персональные правила теперь обрабатываются через движок уведомлений, прямой импорт не нужен.
 
 logger = logging.getLogger(__name__)
-
 PING_PORT = 43333
 PING_TIMEOUT = 3600  # 1 час
 HEARTBEAT_INTERVAL = 300  # 5 минут
@@ -87,10 +88,13 @@ class SyncManager(QObject):
         signals: Optional[SyncSignals] = None,
         background_mode: bool = True,
         session_signals: Optional[SessionSignals] = None,
+        *,
+        db: LocalDB | None = None,
+        remote_force_logout_callback: Callable[[str], None] | None = None,
     ):
         super().__init__()
         logger.info(f"Инициализация SyncManager: background_mode={background_mode}")
-        self._db = LocalDB()
+        self._db = db or LocalDB()
         self._db_lock = RLock()
         self._stop_event = Event()
         self.signals = signals
@@ -110,6 +114,8 @@ class SyncManager(QObject):
         self._last_heartbeat = time.time()
         self._last_loop_started = monotonic()
         self._tick_lock = Lock()  # Защита от перекрытия циклов синхронизации
+        self._remote_callback = remote_force_logout_callback
+        self._remote_emitted = False
         if background_mode:
             self._ping_thread = Thread(target=self._ping_listener, daemon=True)
             self._ping_thread.start()
@@ -154,27 +160,37 @@ class SyncManager(QObject):
             )
 
     def _emit_remote_logout(self, email: str, session_id: str, status: str) -> None:
+        if self._remote_emitted:
+            return
+        self._remote_emitted = True
+
         logger.info(
             "[ADMIN_LOGOUT] Обнаружен статус '%s' для пользователя %s. Запускаем завершение сессии.",
             status,
             email,
         )
-        ack_required = True
-        if self._session_signals:
-            try:
-                self._session_signals.sessionFinished.emit("remote_force_logout")
-                ack_required = False
-            except Exception as exc:
-                logger.debug("sessionFinished emit failed: %s", exc)
-        elif self.signals:
-            try:
-                self.signals.force_logout.emit()
-                ack_required = False
-            except Exception as exc:
-                logger.debug("force_logout emit failed: %s", exc)
 
-        if ack_required:
-            self._ack_remote_command(email, session_id)
+        handled = False
+        if self._remote_callback:
+            try:
+                self._remote_callback("remote_force_logout")
+                handled = True
+            except Exception as exc:
+                logger.debug("remote logout callback failed: %s", exc)
+
+        if not handled:
+            if self._session_signals:
+                try:
+                    self._session_signals.sessionFinished.emit("remote_force_logout")
+                except Exception as exc:
+                    logger.debug("sessionFinished emit failed: %s", exc)
+            elif self.signals:
+                try:
+                    self.signals.force_logout.emit()
+                except Exception as exc:
+                    logger.debug("force_logout emit failed: %s", exc)
+
+        self._ack_remote_command(email, session_id)
 
     def _ack_remote_command(self, email: str | None, session_id: str | None) -> None:
         if not hasattr(sheets_api, "ack_remote_command"):
@@ -209,7 +225,8 @@ class SyncManager(QObject):
         'В работе' | 'LOGOUT' | 'FORCE_LOGOUT'
         """
         try:
-            status = sheets_api.check_user_session_status(email, session_id)
+            with trace_time("check_user_session_status"):
+                status = sheets_api.check_user_session_status(email, session_id)
             return normalize_session_status(status)
         except Exception as e:
             logger.error(f"Ошибка при проверке статуса сессии: {e}")

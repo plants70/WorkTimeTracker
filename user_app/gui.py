@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,15 +11,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import MAX_COMMENT_LENGTH, STATUS_GROUPS
-from consts import (
-    STATUS_ACTIVE,
-    STATUS_FORCE_LOGOUT,
-    STATUS_LOGOUT,
-    normalize_session_status,
-)
-from sheets_api import SheetsAPIError, get_sheets_api
+from consts import STATUS_ACTIVE, STATUS_LOGOUT, normalize_session_status
+from sheets_api import SheetsAPIError
+from telemetry import trace_time
 from user_app import session as session_state
-from user_app.db_local import LocalDB, LocalDBError, write_tx
+from user_app.db_local import LocalDBError, write_tx
+from user_app.services import Services
 from user_app.signals import SessionSignals
 
 try:
@@ -30,6 +26,8 @@ except ImportError:
         from .sync.notifications import Notifier
     except ImportError:
         from notifications import Notifier
+
+from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap
@@ -44,6 +42,9 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from user_app.app_controller import AppController
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,13 @@ class EmployeeApp(QWidget):
         session_signals: Optional[SessionSignals] = None,
         on_session_finish_requested: Optional[Callable[[str], None]] = None,
         session_started_at: Optional[str] = None,
+        *,
+        services: Services,
+        controller: "AppController",
     ):
         super().__init__()
+        self.services = services
+        self.controller = controller
         self.email = email
         self.name = name
         self.role = role
@@ -102,11 +108,15 @@ class EmployeeApp(QWidget):
             except Exception:
                 logger.debug("Unable to persist generated session id")
         self.status_buttons = {}
+        self._status_in_progress = False
+        self._last_status_click = 0.0
+        self._last_finish_click = 0.0
+        self._executor = services.executor
 
         self.login_was_performed = login_was_performed
 
-        # Используем единый синглтон API
-        self.sheets_api = get_sheets_api()
+        # Shared services
+        self.sheets_api = services.sheets
 
         self._init_db()
         self._init_ui()
@@ -178,11 +188,7 @@ class EmployeeApp(QWidget):
             return fallback_dt
 
     def _send_action_to_sheets(self, record_id, user_group=None):
-        threading.Thread(
-            target=self._send_action_to_sheets_worker,
-            args=(record_id, user_group),
-            daemon=True,
-        ).start()
+        self._executor.submit(self._send_action_to_sheets_worker, record_id, user_group)
 
     def _send_action_to_sheets_worker(self, record_id, user_group=None):
         try:
@@ -196,17 +202,18 @@ class EmployeeApp(QWidget):
             action = self._make_action_payload_from_row(row)
             target_group = user_group or self.group or None
             try:
-                self.sheets_api.log_user_actions(
-                    email=action["email"],
-                    action=action.get("action_type", ""),
-                    status=action.get("status", ""),
-                    group=target_group,
-                    timestamp_utc=action.get("timestamp"),
-                    start_utc=action.get("status_start_time"),
-                    end_utc=action.get("status_end_time"),
-                    session_id=action.get("session_id"),
-                    group_at_start=target_group,
-                )
+                with trace_time("worklog_write"):
+                    self.sheets_api.log_user_actions(
+                        email=action["email"],
+                        action=action.get("action_type", ""),
+                        status=action.get("status", ""),
+                        group=target_group,
+                        timestamp_utc=action.get("timestamp"),
+                        start_utc=action.get("status_start_time"),
+                        end_utc=action.get("status_end_time"),
+                        session_id=action.get("session_id"),
+                        group_at_start=target_group,
+                    )
             except SheetsAPIError as exc:
                 logger.warning(
                     "Sheets: не удалось записать действие в WorkLog — %s", exc
@@ -227,11 +234,7 @@ class EmployeeApp(QWidget):
         else:
             prev_id = prev_result
         if prev_id and prev_id > 0:
-            threading.Thread(
-                target=self._finish_and_send_previous_status_worker,
-                args=(prev_id,),
-                daemon=True,
-            ).start()
+            self._executor.submit(self._finish_and_send_previous_status_worker, prev_id)
 
     def _finish_and_send_previous_status_worker(self, prev_id):
         row = self.db.get_action_by_id(prev_id)
@@ -241,17 +244,18 @@ class EmployeeApp(QWidget):
             action = self._make_action_payload_from_row(row)
             target_group = self.group or None
             try:
-                self.sheets_api.log_user_actions(
-                    email=action["email"],
-                    action=action.get("action_type", ""),
-                    status=action.get("status", ""),
-                    group=target_group,
-                    timestamp_utc=action.get("timestamp"),
-                    start_utc=action.get("status_start_time"),
-                    end_utc=action.get("status_end_time"),
-                    session_id=action.get("session_id"),
-                    group_at_start=target_group,
-                )
+                with trace_time("worklog_write"):
+                    self.sheets_api.log_user_actions(
+                        email=action["email"],
+                        action=action.get("action_type", ""),
+                        status=action.get("status", ""),
+                        group=target_group,
+                        timestamp_utc=action.get("timestamp"),
+                        start_utc=action.get("status_start_time"),
+                        end_utc=action.get("status_end_time"),
+                        session_id=action.get("session_id"),
+                        group_at_start=target_group,
+                    )
             except SheetsAPIError as exc:
                 logger.warning(
                     "Sheets: не удалось синхронизировать завершённый статус — %s",
@@ -294,11 +298,7 @@ class EmployeeApp(QWidget):
                 self.on_logout_callback()
 
     def _start_logout_worker(self, mode: str) -> None:
-        threading.Thread(
-            target=self._logout_worker,
-            args=(mode,),
-            daemon=True,
-        ).start()
+        self._executor.submit(self._logout_worker, mode)
 
     def _logout_worker(self, mode: str) -> None:
         reason = "local_logout"
@@ -327,11 +327,12 @@ class EmployeeApp(QWidget):
         for attempt in range(1, 4):
             try:
                 logout_time = datetime.now().isoformat()
-                ok = self.sheets_api.finish_active_session(
-                    self.email,
-                    self.session_id,
-                    logout_time,
-                )
+                with trace_time("logout"):
+                    ok = self.sheets_api.finish_active_session(
+                        self.email,
+                        self.session_id,
+                        logout_time,
+                    )
                 if ok:
                     logger.info(
                         "finish_active_session succeeded for %s (attempt %s)",
@@ -340,9 +341,10 @@ class EmployeeApp(QWidget):
                     )
                     return True, False
 
-                raw_status = self.sheets_api.check_user_session_status(
-                    self.email, self.session_id
-                )
+                with trace_time("check_user_session_status"):
+                    raw_status = self.sheets_api.check_user_session_status(
+                        self.email, self.session_id
+                    )
                 status = normalize_session_status(raw_status)
                 if status and status != STATUS_ACTIVE:
                     logger.info(
@@ -395,7 +397,7 @@ class EmployeeApp(QWidget):
 
     def _init_db(self):
         try:
-            self.db = LocalDB()
+            self.db = self.services.db
             if self.login_was_performed:
                 if self._session_started_at:
                     started_at_arg: datetime | str = self._session_started_at
@@ -524,26 +526,6 @@ class EmployeeApp(QWidget):
         self.shift_check_timer.start(30000)  # каждые 30 сек
         self._auto_check_shift_ended()
 
-    def _is_session_finished_remote(self) -> bool:
-        """
-        True — если по (email, session_id) в ActiveSessions статус 'finished', 'kicked' или 'force_logout'.
-        """
-        try:
-            status = normalize_session_status(
-                self.sheets_api.check_user_session_status(self.email, self.session_id)
-            )
-            if status:
-                logger.debug(
-                    "[ACTIVESESSIONS] status for %s/%s: %s",
-                    self.email,
-                    self.session_id,
-                    status,
-                )
-            return status in {STATUS_LOGOUT, STATUS_FORCE_LOGOUT}
-        except Exception as e:
-            logger.debug(f"_is_session_finished_remote error: {e}")
-        return False
-
     def _auto_check_shift_ended(self):
         if self.shift_ended:
             return
@@ -560,13 +542,7 @@ class EmployeeApp(QWidget):
             logger.info(f"[AUTO_LOGOUT_DETECT] Локально найден LOGOUT для {self.email}")
             return
 
-        # 2) удалённая проверка ActiveSessions
-        if self._is_session_finished_remote():
-            logger.info(
-                f"[AUTO_LOGOUT_DETECT] В ActiveSessions статус НЕ active для {self.email}, session={self.session_id}"
-            )
-            self.force_logout_by_admin()
-            return
+        # Проверку удалённого статуса теперь выполняет контроллер
 
     def force_logout_by_admin(self):
         """
@@ -579,39 +555,19 @@ class EmployeeApp(QWidget):
         self._logout_in_progress = True
         self._closing_reason = "remote_force_logout"
         self._notify_session_finish_requested("remote_force_logout")
-
+        self._disable_post_logout()
+        self.comment_input.clear()
         try:
             QMessageBox.warning(
                 self,
                 "Отключение",
                 "Вы были отключены администратором. Сессия будет завершена.",
             )
-        except Exception:
+        except Exception:  # pragma: no cover - Qt errors ignored
             pass
-
-        record_id = -1
-        try:
-            record_id = self._log_shift_end(
-                "Сессия завершена администратором",
-                reason=STATUS_FORCE_LOGOUT,
-                sync_to_sheets=False,
-            )
-        except Exception as exc:
-            logger.error(f"Ошибка фиксации принудительного выхода: {exc}")
-
-        if record_id and record_id > 0:
-            try:
-                self.db.mark_actions_synced([record_id])
-            except Exception as sync_exc:
-                logger.debug(
-                    "Не удалось пометить запись FORCE_LOGOUT синхронизированной: %s",
-                    sync_exc,
-                )
-
-        self._disable_post_logout()
-        self.comment_input.clear()
         Notifier.show("WorkLog", "Сессия завершается администратором")
-        self._start_logout_worker("remote")
+        self._executor.submit(self._ack_remote_command_with_retry)
+        self.controller.handle_remote_force_logout("remote_force_logout")
 
     def _update_info_text(self):
         info_text = (
@@ -697,46 +653,57 @@ class EmployeeApp(QWidget):
             )
             return
 
-        comment = self.comment_input.toPlainText().strip()
-        if len(comment) > MAX_COMMENT_LENGTH:
-            QMessageBox.warning(
-                self,
-                "Ошибка",
-                f"Комментарий слишком длинный (максимум {MAX_COMMENT_LENGTH} символов)",
-            )
+        now_ts = time.monotonic()
+        if now_ts - self._last_status_click < 0.8:
             return
+        if self._status_in_progress:
+            return
+        self._status_in_progress = True
+        self._last_status_click = now_ts
 
-        if not comment:
-            comment = "Смена статуса"
-
-        self._finish_and_send_previous_status()
-
-        now = datetime.now().isoformat()
         try:
-            with write_tx() as conn:
-                record_id = self.db.log_action_tx(
-                    conn=conn,
-                    email=self.email,
-                    name=self.name,
-                    status=new_status,
-                    action_type="STATUS_CHANGE",
-                    comment=comment,
-                    session_id=self.session_id,
-                    status_start_time=now,
-                    status_end_time=None,
-                    reason=None,
+            comment = self.comment_input.toPlainText().strip()
+            if len(comment) > MAX_COMMENT_LENGTH:
+                QMessageBox.warning(
+                    self,
+                    "Ошибка",
+                    f"Комментарий слишком длинный (максимум {MAX_COMMENT_LENGTH} символов)",
                 )
-            self._send_action_to_sheets(record_id)
-        except Exception as e:
-            logger.error(f"Ошибка записи нового статуса: {e}")
-            QMessageBox.critical(self, "Ошибка", "Не удалось сохранить статус")
-            return
+                return
 
-        self.current_status = new_status
-        self.status_start_time = datetime.fromisoformat(now)
-        self.comment_input.clear()
-        self._update_info_text()
-        Notifier.show("WorkLog", f"Статус изменён на: {new_status}")
+            if not comment:
+                comment = "Смена статуса"
+
+            self._finish_and_send_previous_status()
+
+            now = datetime.now().isoformat()
+            try:
+                with write_tx() as conn:
+                    record_id = self.db.log_action_tx(
+                        conn=conn,
+                        email=self.email,
+                        name=self.name,
+                        status=new_status,
+                        action_type="STATUS_CHANGE",
+                        comment=comment,
+                        session_id=self.session_id,
+                        status_start_time=now,
+                        status_end_time=None,
+                        reason=None,
+                    )
+                self._send_action_to_sheets(record_id)
+            except Exception as e:
+                logger.error(f"Ошибка записи нового статуса: {e}")
+                QMessageBox.critical(self, "Ошибка", "Не удалось сохранить статус")
+                return
+
+            self.current_status = new_status
+            self.status_start_time = datetime.fromisoformat(now)
+            self.comment_input.clear()
+            self._update_info_text()
+            Notifier.show("WorkLog", f"Статус изменён на: {new_status}")
+        finally:
+            self._status_in_progress = False
 
     def _log_shift_end(
         self, comment: str, reason: str = "LOGOUT", sync_to_sheets: bool = True
@@ -773,9 +740,19 @@ class EmployeeApp(QWidget):
             raise
 
     def finish_shift(self):
-        if self.shift_ended or self._logout_in_progress:
+        if self.shift_ended:
             QMessageBox.information(self, "Информация", "Смена уже завершена")
             return
+
+        now_ts = time.monotonic()
+        if now_ts - self._last_finish_click < 0.8:
+            return
+
+        if self._logout_in_progress:
+            QMessageBox.information(self, "Информация", "Операция уже выполняется")
+            return
+
+        self._last_finish_click = now_ts
 
         comment = self.comment_input.toPlainText().strip()
         if not comment:
@@ -820,14 +797,20 @@ class EmployeeApp(QWidget):
         super().closeEvent(event)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - manual testing
     app = QApplication(sys.argv)
+    from user_app.app_controller import AppController
+    from user_app.services import services as _services
+
+    controller = AppController(_services)
     window = EmployeeApp(
         email="test@example.com",
         name="Тестовый Сотрудник",
         role="специалист",
         group="Тестовая группа",
         on_logout_callback=lambda reason: print(f"Logout reason: {reason}"),
+        services=_services,
+        controller=controller,
     )
     window.show()
     sys.exit(app.exec())
