@@ -8,19 +8,19 @@ from functools import partial
 
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QAction,
     QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
     QGroupBox,
-    QHeaderView,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QAbstractItemView,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -497,9 +497,7 @@ class AdminWindow(QMainWindow):
         self._reap_worker.finished.connect(self._reap_thread.quit)
         self._reap_worker.finished.connect(self._reap_worker.deleteLater)
         self._reap_thread.finished.connect(self._reap_thread.deleteLater)
-        self._reap_thread.finished.connect(
-            lambda: setattr(self, "_reap_thread", None)
-        )
+        self._reap_thread.finished.connect(lambda: setattr(self, "_reap_thread", None))
         self._reap_thread.start()
 
     def _on_reap_finished(self, count: int, error: str | None):
@@ -512,9 +510,7 @@ class AdminWindow(QMainWindow):
             self._warn(f"Проверка неактивных сессий не удалась: {error}")
         else:
             msg = (
-                f"Закрыто {count} сессий."
-                if count
-                else "Не найдено неактивных сессий."
+                f"Закрыто {count} сессий." if count else "Не найдено неактивных сессий."
             )
             self.statusBar().showMessage(msg, 5000)
 
@@ -561,9 +557,7 @@ class AdminWindow(QMainWindow):
             self._active_cache = (0.0, set())
             self.refresh_users()
             self.load_active_sessions()
-            self.statusBar().showMessage(
-                f"Сессия {session_id} завершена.", 5000
-            )
+            self.statusBar().showMessage(f"Сессия {session_id} завершена.", 5000)
         else:
             if btn:
                 btn.setEnabled(True)
@@ -912,9 +906,7 @@ class _ReapSessionsWorker(QObject):
         try:
             count = int(self.repo.reap_stale_sessions(self.max_idle_minutes))
         except Exception as e:
-            logging.getLogger(__name__).exception(
-                "Ошибка при запуске reaper: %s", e
-            )
+            logging.getLogger(__name__).exception("Ошибка при запуске reaper: %s", e)
             error_msg = str(e)
         self.finished.emit(count, error_msg)
 

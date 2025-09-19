@@ -63,9 +63,7 @@ def _hb_loop(
         try:
             api.heartbeat_session(session_id=session_id)
         except Exception as exc:
-            logger.warning(
-                "Heartbeat thread error for session %s: %s", session_id, exc
-            )
+            logger.warning("Heartbeat thread error for session %s: %s", session_id, exc)
 
     if not stop_evt.is_set():
         _send_once()

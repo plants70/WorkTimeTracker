@@ -782,9 +782,7 @@ class SheetsAPI:
 
             if not last_ping_col:
                 new_col = (max(header_map.values()) if header_map else 0) + 1
-                self._request_with_retry(
-                    ws.update_cell, 1, new_col, "LastPing"
-                )
+                self._request_with_retry(ws.update_cell, 1, new_col, "LastPing")
                 header_map = self._header_map(ws)
                 last_ping_col = header_map.get("lastping")
 
@@ -1053,7 +1051,9 @@ class SheetsAPI:
         elif len(args) == 3 and session_id is None and email is None:
             email, session_id, logout_time = args
         elif len(args) > 3:
-            raise TypeError("kick_active_session expects at most 3 positional arguments")
+            raise TypeError(
+                "kick_active_session expects at most 3 positional arguments"
+            )
 
         sid = str(session_id or "").strip()
         if email:
@@ -1079,9 +1079,7 @@ class SheetsAPI:
 
             headers = [str(h).strip() for h in data[0]]
             header_map = {
-                header.lower(): idx + 1
-                for idx, header in enumerate(headers)
-                if header
+                header.lower(): idx + 1 for idx, header in enumerate(headers) if header
             }
 
             session_col = header_map.get("sessionid")
