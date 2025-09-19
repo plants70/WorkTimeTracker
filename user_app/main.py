@@ -2,6 +2,7 @@
 import atexit
 import logging
 import sys
+import threading
 import traceback
 from pathlib import Path
 from typing import Any, Dict
@@ -17,11 +18,18 @@ if str(ROOT) not in sys.path:
 from auto_sync import SyncManager  # ← добавили
 
 # Инициализация логирования через единый модуль
-from config import DB_FALLBACK_PATH, DB_MAIN_PATH, LOG_DIR, get_credentials_file
+from config import (
+    DB_FALLBACK_PATH,
+    DB_MAIN_PATH,
+    HEARTBEAT_PERIOD_SEC,
+    LOG_DIR,
+    get_credentials_file,
+)
 from logging_setup import setup_logging
 from notifications.engine import start_background_poller
 from sheets_api import SheetsAPI  # Явный импорт класса SheetsAPI
 from user_app import db_local  # ← добавили импорт
+from user_app.api import UserAPI
 from user_app.signals import SyncSignals
 
 atexit.register(db_local.close_connection)
@@ -37,6 +45,31 @@ class ApplicationSignals(QObject):
     sync_status_changed = pyqtSignal(bool)
     sync_progress = pyqtSignal(int, int)
     sync_finished = pyqtSignal(bool)
+
+
+def _hb_loop(
+    api: UserAPI, session_id: str, stop_evt: threading.Event, period_sec: int
+) -> None:
+    logger = logging.getLogger(__name__)
+
+    try:
+        period = int(period_sec)
+    except (TypeError, ValueError):
+        period = 60
+    if period <= 0:
+        period = 60
+
+    def _send_once() -> None:
+        try:
+            api.heartbeat_session(session_id=session_id)
+        except Exception as exc:
+            logger.warning("Heartbeat thread error for session %s: %s", session_id, exc)
+
+    if not stop_evt.is_set():
+        _send_once()
+
+    while not stop_evt.wait(period):
+        _send_once()
 
 
 # ----- Менеджер приложения -----
@@ -59,6 +92,12 @@ class ApplicationManager(QObject):
         )  # сигналы доступны и для GUI, и для SyncManager
 
         sys.excepthook = self.handle_uncaught_exception
+
+        self.user_api: UserAPI | None = None
+        self._heartbeat_stop_evt: threading.Event | None = None
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_period = HEARTBEAT_PERIOD_SEC
+        self._current_session_id: str | None = None
 
         offline_mode = False
         try:
@@ -98,6 +137,7 @@ class ApplicationManager(QObject):
                 hasattr(SheetsAPI, "check_credentials"),
                 hasattr(self.sheets_api, "test_connection"),
             )
+            self.user_api = UserAPI(self.sheets_api)
         except Exception as e:
             logging.getLogger(__name__).error("SheetsAPI init failed: %s", e)
             raise
@@ -123,6 +163,54 @@ class ApplicationManager(QObject):
 
         if not ok:
             raise RuntimeError("Invalid Google Sheets credentials")
+
+    def _start_session_heartbeat(self, session_id: str | None) -> None:
+        self._stop_session_heartbeat()
+        if not session_id or not self.user_api:
+            return
+
+        stop_evt = threading.Event()
+        try:
+            period_value = int(self._heartbeat_period)
+        except (TypeError, ValueError):
+            period_value = HEARTBEAT_PERIOD_SEC
+        if period_value <= 0:
+            period_value = HEARTBEAT_PERIOD_SEC
+
+        thread = threading.Thread(
+            target=_hb_loop,
+            args=(self.user_api, session_id, stop_evt, period_value),
+            daemon=True,
+            name="session-heartbeat",
+        )
+        self._heartbeat_stop_evt = stop_evt
+        self._heartbeat_thread = thread
+        self._current_session_id = session_id
+        thread.start()
+        logging.getLogger(__name__).info(
+            "Session heartbeat started (session=%s, period=%s)",
+            session_id,
+            period_value,
+        )
+
+    def _stop_session_heartbeat(self) -> None:
+        stop_evt = self._heartbeat_stop_evt
+        thread = self._heartbeat_thread
+        session_id = self._current_session_id
+
+        self._heartbeat_stop_evt = None
+        self._heartbeat_thread = None
+        self._current_session_id = None
+
+        if stop_evt:
+            stop_evt.set()
+        if thread and thread.is_alive():
+            thread.join(timeout=2.0)
+
+        if session_id:
+            logging.getLogger(__name__).info(
+                "Session heartbeat stopped (session=%s)", session_id
+            )
 
     # --- Фоновая синхронизация ---
     def _start_sync_service(self, offline_mode: bool = False):
@@ -209,6 +297,9 @@ class ApplicationManager(QObject):
             logger = logging.getLogger(__name__)
             logger.info("force_logout сигнал подключён к force_logout_by_admin")
 
+            actual_session_id = getattr(self.main_window, "session_id", session_id)
+            self._start_session_heartbeat(actual_session_id)
+
         except Exception as e:
             self._show_error("Main Window Error", f"Cannot show main window: {e}")
             self.quit_application()
@@ -236,6 +327,8 @@ class ApplicationManager(QObject):
         logger = logging.getLogger(__name__)
         logger.info("Shutting down application.")
         self.signals.app_shutdown.emit()
+
+        self._stop_session_heartbeat()
 
         # закрываем окна
         if self.main_window:

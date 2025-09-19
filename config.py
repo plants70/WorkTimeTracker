@@ -13,6 +13,22 @@ load_dotenv()
 
 import tempfile
 
+# ==================== Пульс сессий ====================
+
+
+def _read_env_int(var_name: str, default: int) -> int:
+    value = os.getenv(var_name)
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+HEARTBEAT_PERIOD_SEC = _read_env_int("HEARTBEAT_PERIOD_SEC", 60)
+STALE_SESSION_MINUTES = _read_env_int("STALE_SESSION_MINUTES", 15)
+
 # ==================== Импорт для работы с зашифрованным credentials ====================
 import pyzipper
 

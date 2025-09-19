@@ -757,8 +757,182 @@ class SheetsAPI:
             logger.error(f"set_active_session failed: {e}")
             return False
 
+    def heartbeat_session(
+        self, session_id: str, ts_utc: dt.datetime | None = None
+    ) -> None:
+        """Обновляет поле LastPing для активной сессии."""
+
+        from config import ACTIVE_SESSIONS_SHEET
+
+        sid = str(session_id or "").strip()
+        if not sid:
+            return
+
+        try:
+            ws = self._get_ws(ACTIVE_SESSIONS_SHEET)
+            header_map = self._header_map(ws)
+
+            session_col = header_map.get("sessionid")
+            status_col = header_map.get("status")
+            last_ping_col = header_map.get("lastping")
+
+            if not session_col:
+                logger.warning("heartbeat: SessionID column not found")
+                return
+
+            if not last_ping_col:
+                new_col = (max(header_map.values()) if header_map else 0) + 1
+                self._request_with_retry(ws.update_cell, 1, new_col, "LastPing")
+                header_map = self._header_map(ws)
+                last_ping_col = header_map.get("lastping")
+
+            if not last_ping_col:
+                logger.warning("heartbeat: cannot create LastPing column")
+                return
+
+            data = self._request_with_retry(ws.get_all_values)
+            if not data or len(data) < 2:
+                return
+
+            active_statuses = {"active", "в работе"}
+            timestamp = self._fmt_iso_utc(
+                self._as_utc_datetime(ts_utc) or dt.datetime.now(dt.UTC)
+            )
+
+            for row_idx, row in enumerate(data[1:], start=2):
+                if session_col > len(row):
+                    continue
+                row_sid = (row[session_col - 1] or "").strip()
+                if row_sid != sid:
+                    continue
+
+                if status_col and status_col <= len(row):
+                    status_value = (row[status_col - 1] or "").strip().lower()
+                    if status_value and status_value not in active_statuses:
+                        return
+
+                self._request_with_retry(
+                    ws.update_cell, row_idx, last_ping_col, timestamp
+                )
+                logger.info("heartbeat ok (session=%s)", sid)
+                return
+
+            logger.debug("heartbeat: session %s not found", sid)
+        except Exception as e:
+            logger.warning("heartbeat failed for session %s: %s", sid, e)
+
+    def reap_stale_sessions(self, max_idle_minutes: int | None = None) -> int:
+        """Завершает сессии без пинга дольше порога."""
+
+        from config import ACTIVE_SESSIONS_SHEET, STALE_SESSION_MINUTES
+
+        try:
+            if max_idle_minutes is None:
+                idle_minutes = int(STALE_SESSION_MINUTES)
+            else:
+                idle_minutes = int(max_idle_minutes)
+        except (TypeError, ValueError):
+            idle_minutes = int(STALE_SESSION_MINUTES)
+
+        idle_minutes = max(0, idle_minutes)
+        cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=idle_minutes)
+
+        try:
+            ws = self._get_ws(ACTIVE_SESSIONS_SHEET)
+            data = self._request_with_retry(ws.get_all_values)
+        except Exception as e:
+            logger.error("reap_stale_sessions failed to read sheet: %s", e)
+            return 0
+
+        if not data or len(data) < 2:
+            return 0
+
+        headers = [str(h).strip() for h in data[0]]
+        header_map = {
+            header.lower(): idx + 1 for idx, header in enumerate(headers) if header
+        }
+
+        session_col = header_map.get("sessionid")
+        email_col = header_map.get("email")
+        status_col = header_map.get("status")
+        login_col = header_map.get("logintime") or header_map.get("login time")
+        last_ping_col = header_map.get("lastping")
+
+        if not session_col or not email_col:
+            logger.warning("reap_stale_sessions: required columns missing")
+            return 0
+
+        active_statuses = {"active", "в работе"}
+        closed = 0
+
+        for row in data[1:]:
+            if not row:
+                continue
+
+            status_ok = True
+            if status_col and status_col <= len(row):
+                status_value = (row[status_col - 1] or "").strip().lower()
+                if status_value and status_value not in active_statuses:
+                    status_ok = False
+            if not status_ok:
+                continue
+
+            email_value = ""
+            if email_col <= len(row):
+                email_value = (row[email_col - 1] or "").strip()
+            session_value = ""
+            if session_col <= len(row):
+                session_value = (row[session_col - 1] or "").strip()
+
+            if not email_value or not session_value:
+                continue
+
+            last_ping_value = ""
+            if last_ping_col and last_ping_col <= len(row):
+                last_ping_value = (row[last_ping_col - 1] or "").strip()
+
+            login_value = ""
+            if login_col and login_col <= len(row):
+                login_value = (row[login_col - 1] or "").strip()
+
+            last_ping_dt = self._as_utc_datetime(last_ping_value)
+            login_dt = self._as_utc_datetime(login_value)
+
+            is_stale = False
+            if last_ping_dt:
+                is_stale = last_ping_dt < cutoff
+            elif login_dt:
+                is_stale = login_dt < cutoff
+            else:
+                is_stale = True
+
+            if not is_stale:
+                continue
+
+            try:
+                if self.finish_active_session(
+                    email=email_value,
+                    session_id=session_value,
+                    reason="FORCE_LOGOUT (stale)",
+                ):
+                    closed += 1
+            except Exception as e:
+                logger.warning(
+                    "reap: failed to close session %s: %s",
+                    session_value,
+                    e,
+                )
+
+        logger.info("reap: force-closed %s stale sessions.", closed)
+        return closed
+
     def finish_active_session(
-        self, email: str, session_id: str, logout_time: str | None = None
+        self,
+        email: str,
+        session_id: str,
+        logout_time: str | None = None,
+        *,
+        reason: str | None = None,
     ) -> bool:
         """
         Надёжно завершает активную сессию:
@@ -792,13 +966,21 @@ class SheetsAPI:
 
             lt = self._ensure_local_str(lt_source)
 
+            status_value = "finished"
+            worklog_status = "LOGOUT"
+            action_note = None
+            if reason:
+                status_value = "FORCE_LOGOUT"
+                worklog_status = "FORCE_LOGOUT"
+                action_note = reason
+
             def apply_update(row_idx: int, row_dict: dict[str, str]) -> bool:
                 cols = sorted([c_status, c_logout])
                 left = self._num_to_a1_col(cols[0])
                 right = self._num_to_a1_col(cols[-1])
                 rng = f"{left}{row_idx}:{right}{row_idx}"
                 buf = [""] * (cols[-1] - cols[0] + 1)
-                buf[c_status - cols[0]] = "finished"
+                buf[c_status - cols[0]] = status_value
                 buf[c_logout - cols[0]] = lt
                 self._request_with_retry(lambda: ws.update(rng, [buf]))
                 self._update_worklog_logout(
@@ -806,6 +988,8 @@ class SheetsAPI:
                     session_id=sid,
                     logout_dt=logout_dt_obj,
                     active_row=row_dict,
+                    status_value=worklog_status,
+                    action_note=action_note,
                 )
                 return True
 
@@ -845,11 +1029,97 @@ class SheetsAPI:
             logger.error(f"finish_active_session failed: {e}")
             return False
 
-    def kick_active_session(
-        self, email: str, session_id: str, logout_time: str | None = None
-    ) -> bool:
-        """Устанавливает Status='kicked' и LogoutTime по (email, session_id)."""
-        return self._update_session_status(email, session_id, "kicked", logout_time)
+    def kick_active_session(self, *args, **kwargs) -> bool:
+        """Принудительно завершает активную сессию."""
+
+        reason = kwargs.pop("reason", None)
+        status_override = kwargs.pop("status", None)
+        logout_time = kwargs.pop("logout_time", None)
+        email_kw = kwargs.pop("email", None)
+        session_kw = kwargs.pop("session_id", None)
+
+        if kwargs:
+            raise TypeError("kick_active_session received unexpected keyword arguments")
+
+        email = email_kw
+        session_id = session_kw
+
+        if len(args) == 1 and session_id is None and email is None:
+            session_id = args[0]
+        elif len(args) == 2 and session_id is None and email is None:
+            email, session_id = args
+        elif len(args) == 3 and session_id is None and email is None:
+            email, session_id, logout_time = args
+        elif len(args) > 3:
+            raise TypeError(
+                "kick_active_session expects at most 3 positional arguments"
+            )
+
+        sid = str(session_id or "").strip()
+        if email:
+            return self._update_session_status(
+                email,
+                sid,
+                status_override or "kicked",
+                logout_time,
+            )
+
+        if not sid:
+            return False
+
+        reason_value = reason or "FORCE_LOGOUT (admin)"
+
+        try:
+            from config import ACTIVE_SESSIONS_SHEET
+
+            ws = self._get_ws(ACTIVE_SESSIONS_SHEET)
+            data = self._request_with_retry(ws.get_all_values)
+            if not data or len(data) < 2:
+                return False
+
+            headers = [str(h).strip() for h in data[0]]
+            header_map = {
+                header.lower(): idx + 1 for idx, header in enumerate(headers) if header
+            }
+
+            session_col = header_map.get("sessionid")
+            email_col = header_map.get("email")
+            status_col = header_map.get("status")
+
+            if not session_col or not email_col:
+                return False
+
+            email_value = ""
+            for row in data[1:]:
+                if session_col > len(row):
+                    continue
+                row_sid = (row[session_col - 1] or "").strip()
+                if row_sid != sid:
+                    continue
+                if status_col and status_col <= len(row):
+                    status_value = (row[status_col - 1] or "").strip().lower()
+                    if status_value and status_value not in {"active", "в работе"}:
+                        return False
+                if email_col <= len(row):
+                    email_value = (row[email_col - 1] or "").strip()
+                break
+
+            if not email_value:
+                logger.warning("kick: session %s not found", sid)
+                return False
+
+            ok = self.finish_active_session(
+                email=email_value,
+                session_id=sid,
+                logout_time=logout_time,
+                reason=reason_value,
+            )
+            if ok:
+                logger.info("kick: session %s closed by admin.", sid)
+            return ok
+        except Exception as e:
+            logger.error("kick_active_session failed for %s: %s", sid, e)
+            return False
 
     def _update_session_status(
         self, email: str, session_id: str, status: str, logout_time: str | None
@@ -1064,6 +1334,8 @@ class SheetsAPI:
         session_id: str,
         logout_dt: dt.datetime | None,
         active_row: dict[str, str] | None,
+        status_value: str = "LOGOUT",
+        action_note: str | None = None,
     ) -> bool:
         """Обновляет End/Duration в WorkLog по session_id или создаёт LOGOUT-запись."""
 
@@ -1171,8 +1443,17 @@ class SheetsAPI:
                 current_status = ""
                 if status_col <= len(row_values):
                     current_status = (row_values[status_col - 1] or "").strip()
-                if current_status.upper() != "LOGOUT":
-                    updates[status_col] = "LOGOUT"
+                if current_status.upper() != status_value.upper():
+                    updates[status_col] = status_value
+
+            if action_note and action_col:
+                current_action = ""
+                if action_col <= len(row_values):
+                    current_action = (row_values[action_col - 1] or "").strip()
+                base_action = current_action or "LOGOUT"
+                note = action_note.strip()
+                if note and note.lower() not in base_action.lower():
+                    updates[action_col] = f"{base_action} ({note})"
 
             if not updates:
                 return True
@@ -1205,10 +1486,16 @@ class SheetsAPI:
             login_start = active_row.get("LoginTime") or active_row.get("logintime")
 
         try:
+            action_text = "LOGOUT"
+            if action_note:
+                note = action_note.strip()
+                if note:
+                    action_text = f"{action_text} ({note})"
+
             self.log_user_actions(
                 email=email,
-                action="LOGOUT",
-                status="LOGOUT",
+                action=action_text,
+                status=status_value,
                 group=fallback_group,
                 timestamp_utc=logout_dt,
                 start_utc=login_start,

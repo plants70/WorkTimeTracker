@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 
 from sheets_api import SheetsAPI, SheetsAPIError
+
+logger = logging.getLogger(__name__)
 
 
 class UserNotFound(Exception):
@@ -44,6 +47,20 @@ class UserAPI:
 
     def finish_session(self, email: str, session_id: str) -> bool:
         return self.sheets.finish_active_session(email=email, session_id=session_id)
+
+    def heartbeat_session(
+        self, session_id: str, ts_utc: dt.datetime | None = None
+    ) -> None:
+        """Отправляет heartbeat для активной сессии."""
+
+        if not session_id:
+            return
+
+        try:
+            if hasattr(self.sheets, "heartbeat_session"):
+                self.sheets.heartbeat_session(session_id=session_id, ts_utc=ts_utc)  # type: ignore[attr-defined]
+        except Exception as exc:  # pragma: no cover - сетевые ошибки логируем мягко
+            logger.warning("Heartbeat failed for session %s: %s", session_id, exc)
 
     def force_logout_if_needed(self, email: str, session_id: str) -> bool:
         """
