@@ -10,8 +10,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from consts import STATUS_ACTIVE, STATUS_FORCE_LOGOUT, STATUS_LOGOUT
 from config import LOCAL_DB_PATH, MAX_COMMENT_LENGTH, MAX_HISTORY_DAYS
+from user_app import session as session_state
 from user_app.db_migrations import apply_migrations
+from user_app.session import generate_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,101 @@ _BUSY_MS = 60000  # до 60с ждём блокировку
 
 class LocalDBError(Exception):
     """Ошибки локальной БД."""
+
+
+def _ensure_iso_utc(value: dt.datetime | str | None) -> str:
+    if isinstance(value, dt.datetime):
+        moment = value if value.tzinfo else value.replace(tzinfo=dt.UTC)
+        return moment.astimezone(dt.UTC).isoformat()
+    if value:
+        return str(value)
+    return dt.datetime.now(dt.UTC).isoformat()
+
+
+def _resolve_email_tx(
+    conn: sqlite3.Connection, session_id: str, email: str | None = None
+) -> str:
+    candidate = (email or "").strip()
+    if candidate:
+        return candidate
+    state_email = (session_state.get_user_email() or "").strip()
+    if state_email:
+        return state_email
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT email
+              FROM logs
+             WHERE session_id=?
+          ORDER BY id DESC
+             LIMIT 1
+            """,
+            (session_id,),
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            return str(row[0]).strip()
+    finally:
+        cur.close()
+    return ""
+
+
+def _resolve_name_tx(
+    conn: sqlite3.Connection,
+    email: str,
+    session_id: str,
+    name: str | None = None,
+) -> str:
+    if name and name.strip():
+        return name.strip()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT name
+              FROM logs
+             WHERE email=? AND session_id=?
+          ORDER BY id DESC
+             LIMIT 1
+            """,
+            (email, session_id),
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            return str(row[0]).strip()
+    finally:
+        cur.close()
+    return email
+
+
+def _resolve_group_tx(
+    conn: sqlite3.Connection,
+    email: str,
+    session_id: str,
+    user_group: str | None = None,
+) -> str | None:
+    if user_group and user_group.strip():
+        return user_group.strip()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT user_group
+              FROM logs
+             WHERE email=? AND session_id=?
+          ORDER BY id DESC
+             LIMIT 1
+            """,
+            (email, session_id),
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            value = str(row[0]).strip()
+            return value or None
+    finally:
+        cur.close()
+    return None
 
 
 def _connect(path: str) -> sqlite3.Connection:
@@ -579,7 +677,7 @@ class LocalDB:
     # Action logs (то, что синхронизируется)
     # ------------------------------------------------------------------ #
     def _gen_session_id(self, email: str) -> str:
-        return f"{(email or '')[:8]}_{dt.datetime.now().strftime('%Y%m%d%H%M%S')}"
+        return generate_session_id(email)
 
     def log_action(
         self,
@@ -713,6 +811,282 @@ class LocalDB:
                 )
                 return -1
             raise LocalDBError(f"Ошибка записи в лог: {e}") from e
+
+    def mark_session_active(
+        self,
+        session_id: str,
+        *,
+        email: str | None = None,
+        name: str | None = None,
+        status: str = STATUS_ACTIVE,
+        started_at: dt.datetime | str | None = None,
+        comment: str | None = None,
+        user_group: str | None = None,
+    ) -> tuple[int | None, bool]:
+        """Зафиксировать начало смены, идемпотентно по session_id."""
+
+        self._ensure_open()
+        if self.conn is None:
+            raise LocalDBError("Не удалось открыть локальную БД")
+
+        with self._lock:
+            with write_tx() as conn:
+                return self.mark_session_active_tx(
+                    conn,
+                    session_id=session_id,
+                    email=email,
+                    name=name,
+                    status=status,
+                    started_at=started_at,
+                    comment=comment,
+                    user_group=user_group,
+                )
+
+    def mark_session_active_tx(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        session_id: str,
+        email: str | None = None,
+        name: str | None = None,
+        status: str = STATUS_ACTIVE,
+        started_at: dt.datetime | str | None = None,
+        comment: str | None = None,
+        user_group: str | None = None,
+    ) -> tuple[int | None, bool]:
+        sid = (session_id or "").strip()
+        if not sid:
+            return None, False
+
+        email_value = _resolve_email_tx(conn, sid, email)
+        if not email_value:
+            return None, False
+
+        name_value = _resolve_name_tx(conn, email_value, sid, name)
+        group_value = _resolve_group_tx(conn, email_value, sid, user_group)
+        start_iso = _ensure_iso_utc(started_at)
+        comment_value = (comment or "Начало смены").strip()
+
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                SELECT id
+                  FROM logs
+                 WHERE email=?
+                   AND session_id=?
+                   AND LOWER(action_type)='login'
+              ORDER BY id DESC
+                 LIMIT 1
+                """,
+                (email_value, sid),
+            )
+            row = cur.fetchone()
+            if row:
+                rid = int(row[0])
+                cur.execute(
+                    """
+                    UPDATE logs
+                       SET status=?,
+                           status_start_time=COALESCE(status_start_time, ?),
+                           status_end_time=NULL,
+                           comment=CASE
+                               WHEN ? != '' AND (comment IS NULL OR comment='') THEN ?
+                               ELSE comment
+                           END,
+                           user_group=CASE
+                               WHEN ? IS NOT NULL AND ? != '' AND (user_group IS NULL OR user_group='')
+                                   THEN ?
+                               ELSE user_group
+                           END
+                     WHERE id=?
+                    """,
+                    (
+                        status,
+                        start_iso,
+                        comment_value,
+                        comment_value,
+                        group_value,
+                        group_value or "",
+                        group_value,
+                        rid,
+                    ),
+                )
+                return rid, False
+
+            record_id = self.log_action_tx(
+                conn=conn,
+                email=email_value,
+                name=name_value,
+                status=status,
+                action_type="LOGIN",
+                comment=comment_value,
+                session_id=sid,
+                status_start_time=start_iso,
+                status_end_time=None,
+                reason=None,
+                user_group=group_value,
+            )
+            return record_id, True
+        finally:
+            cur.close()
+
+    def finish_session(
+        self,
+        session_id: str,
+        *,
+        email: str | None = None,
+        name: str | None = None,
+        status: str = STATUS_LOGOUT,
+        comment: str | None = None,
+        reason: str | None = None,
+        logout_time: dt.datetime | str | None = None,
+        user_group: str | None = None,
+    ) -> tuple[int | None, bool]:
+        """Закрыть сессию (LOGOUT/FORCE_LOGOUT) без дублирования записей."""
+
+        self._ensure_open()
+        if self.conn is None:
+            raise LocalDBError("Не удалось открыть локальную БД")
+
+        with self._lock:
+            with write_tx() as conn:
+                return self.finish_session_tx(
+                    conn,
+                    session_id=session_id,
+                    email=email,
+                    name=name,
+                    status=status,
+                    comment=comment,
+                    reason=reason,
+                    logout_time=logout_time,
+                    user_group=user_group,
+                )
+
+    def finish_session_tx(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        session_id: str,
+        email: str | None = None,
+        name: str | None = None,
+        status: str = STATUS_LOGOUT,
+        comment: str | None = None,
+        reason: str | None = None,
+        logout_time: dt.datetime | str | None = None,
+        user_group: str | None = None,
+    ) -> tuple[int | None, bool]:
+        sid = (session_id or "").strip()
+        if not sid:
+            return None, False
+
+        email_value = _resolve_email_tx(conn, sid, email)
+        if not email_value:
+            return None, False
+
+        name_value = _resolve_name_tx(conn, email_value, sid, name)
+        group_value = _resolve_group_tx(conn, email_value, sid, user_group)
+        logout_iso = _ensure_iso_utc(logout_time)
+        status_value = (status or STATUS_LOGOUT).strip() or STATUS_LOGOUT
+        reason_value = (reason or status_value).strip()
+        comment_value = (comment or "").strip()
+
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                """
+                UPDATE logs
+                   SET status_end_time = COALESCE(status_end_time, ?)
+                 WHERE email=?
+                   AND session_id=?
+                   AND status_end_time IS NULL
+                   AND action_type IN ('LOGIN','STATUS_CHANGE')
+                """,
+                (logout_iso, email_value, sid),
+            )
+            if reason_value:
+                cur.execute(
+                    """
+                    UPDATE logs
+                       SET reason = CASE
+                           WHEN reason IS NULL OR reason='' THEN ?
+                           ELSE reason
+                       END
+                     WHERE email=?
+                       AND session_id=?
+                       AND action_type IN ('LOGIN','STATUS_CHANGE')
+                    """,
+                    (reason_value, email_value, sid),
+                )
+
+            cur.execute(
+                """
+                SELECT id
+                  FROM logs
+                 WHERE email=?
+                   AND session_id=?
+                   AND LOWER(action_type)='logout'
+              ORDER BY id DESC
+                 LIMIT 1
+                """,
+                (email_value, sid),
+            )
+            row = cur.fetchone()
+            if row:
+                rid = int(row[0])
+                cur.execute(
+                    """
+                    UPDATE logs
+                       SET status=?,
+                           status_start_time=COALESCE(status_start_time, ?),
+                           status_end_time=COALESCE(status_end_time, ?),
+                           reason=CASE
+                               WHEN ? != '' THEN COALESCE(NULLIF(reason,''), ?)
+                               ELSE reason
+                           END,
+                           comment=CASE
+                               WHEN ? != '' AND (comment IS NULL OR comment='') THEN ?
+                               ELSE comment
+                           END,
+                           user_group=CASE
+                               WHEN ? IS NOT NULL AND ? != '' AND (user_group IS NULL OR user_group='')
+                                   THEN ?
+                               ELSE user_group
+                           END
+                     WHERE id=?
+                    """,
+                    (
+                        status_value,
+                        logout_iso,
+                        logout_iso,
+                        reason_value,
+                        reason_value,
+                        comment_value,
+                        comment_value,
+                        group_value,
+                        group_value or "",
+                        group_value,
+                        rid,
+                    ),
+                )
+                return rid, False
+
+            record_id = self.log_action_tx(
+                conn=conn,
+                email=email_value,
+                name=name_value,
+                status=status_value,
+                action_type="LOGOUT",
+                comment=comment_value or None,
+                session_id=sid,
+                status_start_time=logout_iso,
+                status_end_time=logout_iso,
+                reason=reason_value or None,
+                user_group=group_value,
+            )
+            return record_id, True
+        finally:
+            cur.close()
 
     def get_unsynced_actions(self, limit: int = 100) -> list[tuple]:
         self._ensure_open()

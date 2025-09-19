@@ -45,8 +45,10 @@ try:
         SYNC_INTERVAL_ONLINE,
         SYNC_RETRY_STRATEGY,
     )
+    from consts import STATUS_ACTIVE, normalize_session_status
     from sheets_api import SheetsAPIError, get_sheets_api
     from user_app.db_local import LocalDB
+    from user_app.signals import SessionSignals
 
     # сохраняем прежнее имя переменной для кода ниже
     sheets_api = get_sheets_api()
@@ -81,7 +83,10 @@ class SyncSignals(QObject):
 
 class SyncManager(QObject):
     def __init__(
-        self, signals: Optional[SyncSignals] = None, background_mode: bool = True
+        self,
+        signals: Optional[SyncSignals] = None,
+        background_mode: bool = True,
+        session_signals: Optional[SessionSignals] = None,
     ):
         super().__init__()
         logger.info(f"Инициализация SyncManager: background_mode={background_mode}")
@@ -89,6 +94,7 @@ class SyncManager(QObject):
         self._db_lock = RLock()
         self._stop_event = Event()
         self.signals = signals
+        self._session_signals = session_signals
         self._background_mode = background_mode
         self._sync_interval = SYNC_INTERVAL if background_mode else 0
         self._last_sync_time = None
@@ -129,63 +135,85 @@ class SyncManager(QObject):
             return
 
         try:
+            status = self._check_user_session_status(email, session_id)
             logger.info(
-                f"Проверка статуса сессии для пользователя {email}, session_id: {session_id}"
+                "Проверка статуса сессии для пользователя %s, session_id=%s -> %s",
+                email,
+                session_id,
+                status or "<unknown>",
             )
-            # Проверяем статус сессии
-            remote_status = self._check_user_session_status(email, session_id)
-            logger.debug(f"Получен удаленный статус: {remote_status}")
 
-            if remote_status == "kicked":
-                logger.info(
-                    f"[ADMIN_LOGOUT] Обнаружен статус 'kicked' для пользователя {email}. Испускаем force_logout."
-                )
-                if self.signals:
-                    self.signals.force_logout.emit()
-                # Отправляем ACK подтверждение команды
-                try:
-                    sheets_api.ack_remote_command(email=email, session_id=session_id)
-                    logger.info(f"ACK отправлен для команды kick пользователя {email}")
-                except Exception as ack_error:
-                    logger.error(f"Ошибка отправки ACK: {ack_error}")
-                return
-            elif remote_status == "finished":
-                logger.warning(
-                    f"Получена команда 'finished' для пользователя {email}. Отправка сигнала в GUI."
-                )
-                if self.signals:
-                    logger.info("Emit force_logout signal to GUI")
-                    self.signals.force_logout.emit()
-                # Отправляем ACK подтверждение команды
-                try:
-                    sheets_api.ack_remote_command(email=email, session_id=session_id)
-                    logger.info(
-                        f"ACK отправлен для команды finished пользователя {email}"
-                    )
-                except Exception as ack_error:
-                    logger.error(f"Ошибка отправки ACK: {ack_error}")
-                # НЕ вызываем self.stop() здесь!
+            if status and status != STATUS_ACTIVE:
+                self._emit_remote_logout(email, session_id, status)
             else:
-                logger.debug(f"Статус сессии в норме: {remote_status}")
+                logger.debug(f"Статус сессии в норме: {status}")
 
         except Exception as e:
             logger.error(
                 f"Ошибка при проверке удаленных команд для {email}: {e}", exc_info=True
             )
 
-    def _check_user_session_status(self, email: str, session_id: str) -> str:
+    def _emit_remote_logout(self, email: str, session_id: str, status: str) -> None:
+        logger.info(
+            "[ADMIN_LOGOUT] Обнаружен статус '%s' для пользователя %s. Запускаем завершение сессии.",
+            status,
+            email,
+        )
+        ack_required = True
+        if self._session_signals:
+            try:
+                self._session_signals.sessionFinished.emit("remote_force_logout")
+                ack_required = False
+            except Exception as exc:
+                logger.debug("sessionFinished emit failed: %s", exc)
+        elif self.signals:
+            try:
+                self.signals.force_logout.emit()
+                ack_required = False
+            except Exception as exc:
+                logger.debug("force_logout emit failed: %s", exc)
+
+        if ack_required:
+            self._ack_remote_command(email, session_id)
+
+    def _ack_remote_command(self, email: str | None, session_id: str | None) -> None:
+        if not hasattr(sheets_api, "ack_remote_command"):
+            return
+
+        email_value = (email or "").strip()
+        session_value = str(session_id or "").strip()
+        if not email_value or not session_value:
+            return
+
+        try:
+            ok = sheets_api.ack_remote_command(
+                email=email_value, session_id=session_value
+            )
+            logger.info(
+                "Remote command ACK (sync manager) email=%s session=%s -> %s",
+                email_value,
+                session_value,
+                ok,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to ACK remote command (email=%s, session=%s): %s",
+                email_value,
+                session_value,
+                exc,
+            )
+
+    def _check_user_session_status(self, email: str, session_id: str) -> str | None:
         """
-        Возвращает строковый статус из ActiveSessions:
-        'active' | 'kicked' | 'finished' | 'expired' | 'unknown'
+        Возвращает нормализованный статус из ActiveSessions:
+        'В работе' | 'LOGOUT' | 'FORCE_LOGOUT'
         """
         try:
-            row = sheets_api.check_user_session_status(email, session_id)
-            if not row:
-                return "unknown"
-            return (row.get("Status") or "unknown").strip().lower()
+            status = sheets_api.check_user_session_status(email, session_id)
+            return normalize_session_status(status)
         except Exception as e:
             logger.error(f"Ошибка при проверке статуса сессии: {e}")
-            return "unknown"
+            return None
 
     def _ping_listener(self):
         logger.info(f"Запуск ping listener на UDP порту {PING_PORT}")

@@ -13,10 +13,17 @@ from typing import Optional, Union
 _LOGGING_INITIALIZED = False
 _ROOT_LOGGER_CONFIGURED = False
 
+try:  # pragma: no cover - защитный импорт
+    from config import DEBUG_IDS as _DEBUG_IDS  # type: ignore
+except Exception:  # pragma: no cover - fallback на окружение
+    _DEBUG_IDS = os.getenv("DEBUG_IDS", "").strip().lower() in {"1", "true", "yes", "on"}
+
 
 # ----------------------------- PII masking -----------------------------------
 def _mask_pii(msg: str) -> str:
     """Грубое маскирование email и телефонов в логах."""
+    if _DEBUG_IDS:
+        return msg
     msg = re.sub(r"([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})", r"***@\2", msg)
     msg = re.sub(r"\+?\d[\d\s\-()]{6,}\d", "***PHONE***", msg)
     return msg

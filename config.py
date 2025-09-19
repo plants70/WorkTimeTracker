@@ -31,6 +31,16 @@ def _read_env_int(var_name: str, default: int) -> int:
 HEARTBEAT_PERIOD_SEC = _read_env_int("HEARTBEAT_PERIOD_SEC", 60)
 STALE_SESSION_MINUTES = _read_env_int("STALE_SESSION_MINUTES", 15)
 
+
+def _read_env_bool(var_name: str, default: bool = False) -> bool:
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+DEBUG_IDS: bool = _read_env_bool("DEBUG_IDS", False)
+
 # ==================== Импорт для работы с зашифрованным credentials ====================
 import pyzipper
 

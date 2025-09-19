@@ -19,6 +19,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from auto_sync import SyncManager  # ← добавили
+from consts import (
+    STATUS_ACTIVE,
+    STATUS_FORCE_LOGOUT,
+    STATUS_LOGOUT,
+    normalize_session_status,
+)
 
 # Инициализация логирования через единый модуль
 from config import (
@@ -69,32 +75,38 @@ def _hb_loop(
     if period <= 0:
         period = 60
 
-    active_statuses = {"active", "в работе"}
     remote_emitted = False
 
     def _check_remote() -> None:
         nonlocal remote_emitted
-        if remote_emitted or not session_signals or not email:
+        if remote_emitted:
             return
         if suppress_evt and suppress_evt.is_set():
             return
         try:
-            status = (
-                (api.get_session_status(email=email, session_id=session_id) or "")
-                .strip()
-                .lower()
+            raw_status = api.get_session_status(
+                session_id=session_id, email=email
             )
-        except (
-            Exception
-        ) as exc:  # pragma: no cover - доп. страховка от неожиданных исключений
+        except Exception as exc:  # pragma: no cover - защита от сетевых ошибок
             logger.debug("Heartbeat remote check failed: %s", exc)
             return
-        if status and status not in active_statuses:
+
+        normalized_status = normalize_session_status(raw_status)
+        logger.info(
+            "heartbeat status=%s session=%s",
+            normalized_status or "<unknown>",
+            session_id,
+        )
+
+        if not session_signals or not email:
+            return
+
+        if normalized_status and normalized_status != STATUS_ACTIVE:
             remote_emitted = True
             logger.info(
                 "Heartbeat detected non-active status (session=%s, status=%s)",
                 session_id,
-                status,
+                normalized_status,
             )
             session_signals.sessionFinished.emit("remote_force_logout")
             stop_evt.set()
@@ -147,6 +159,7 @@ class ApplicationManager(QObject):
         self._pending_finish_reason: str | None = None
         self._returning_to_login = False
         self._suppress_remote_checks = threading.Event()
+        self._session_already_terminated = False
 
         offline_mode = False
         try:
@@ -277,7 +290,9 @@ class ApplicationManager(QObject):
             # QThread + worker
             self.sync_thread = QThread(self)
             self.sync_worker = SyncManager(
-                signals=self.sync_signals, background_mode=True
+                signals=self.sync_signals,
+                background_mode=True,
+                session_signals=self.session_signals,
             )
             if offline_mode:
                 # мягкий режим восстановления сети
@@ -347,6 +362,9 @@ class ApplicationManager(QObject):
             if "login_was_performed" in user_data:
                 login_was_performed = bool(user_data["login_was_performed"])
 
+            self._session_already_terminated = False
+            session_started_at = user_data.get("session_started_at")
+
             self._suppress_remote_checks.clear()
             self._pending_finish_reason = None
 
@@ -374,15 +392,18 @@ class ApplicationManager(QObject):
                 group=user_data.get("group", ""),
                 session_signals=self.session_signals,
                 on_session_finish_requested=self.handle_session_finish_requested,
+                session_started_at=session_started_at,
             )
             self.main_window.show()
 
             # подключаем «принудительный разлогин» из сервиса синхронизации
-            self.sync_signals.force_logout.connect(
-                self.main_window.force_logout_by_admin
-            )
+            try:
+                self.sync_signals.force_logout.disconnect()
+            except TypeError:
+                pass
+            self.sync_signals.force_logout.connect(self._emit_remote_force_logout)
             logger = logging.getLogger(__name__)
-            logger.info("force_logout сигнал подключён к force_logout_by_admin")
+            logger.info("force_logout сигнал подключён к sessionFinished")
 
             actual_session_id = getattr(self.main_window, "session_id", session_id)
             self._current_session_id = actual_session_id
@@ -427,6 +448,9 @@ class ApplicationManager(QObject):
             logger.info("Session finish requested (local)")
         self.return_to_login(normalized)
 
+    def _emit_remote_force_logout(self) -> None:
+        self.session_signals.sessionFinished.emit("remote_force_logout")
+
     def _finalize_local_session(self, reason: str) -> None:
         logger = logging.getLogger(__name__)
         window = self.main_window
@@ -435,11 +459,13 @@ class ApplicationManager(QObject):
         if not email or not session_id:
             return
 
-        status_value = "FORCE_LOGOUT" if reason.startswith("remote") else "LOGOUT"
+        status_value = (
+            STATUS_FORCE_LOGOUT if reason.startswith("remote") else STATUS_LOGOUT
+        )
         comment = (
             "Сессия завершена администратором"
             if reason.startswith("remote")
-            else "Завершение смены"
+            else "Смена завершена"
         )
 
         try:
@@ -449,42 +475,32 @@ class ApplicationManager(QObject):
             return
 
         record_id: int | None = None
+        created = False
         try:
-            with db_local.write_tx() as conn:
-                try:
-                    db.finish_last_status_tx(
-                        conn,
-                        email,
-                        session_id,
-                        reason=status_value,
-                    )
-                except TypeError:
-                    db.finish_last_status_tx(conn, email, session_id)
-
-                if not db.check_existing_logout(email, session_id):
-                    now_iso = dt.datetime.now(dt.UTC).isoformat()
-                    name_value = getattr(window, "name", "") or email
-                    group_value = getattr(window, "group", None)
-                    record_id = db.log_action_tx(
-                        conn=conn,
-                        email=email,
-                        name=name_value,
-                        status=status_value,
-                        action_type="LOGOUT",
-                        comment=comment,
-                        session_id=session_id,
-                        status_start_time=now_iso,
-                        status_end_time=now_iso,
-                        reason=status_value,
-                        user_group=group_value,
-                    )
+            name_value = getattr(window, "name", "") or email
+            group_value = getattr(window, "group", None)
+            record_id, created = db.finish_session(
+                session_id,
+                email=email,
+                name=name_value,
+                status=status_value,
+                comment=comment,
+                reason=status_value,
+                logout_time=dt.datetime.now(dt.UTC),
+                user_group=group_value,
+            )
         except Exception as exc:
             logger.warning(
                 "Finalize local session failed (session=%s): %s", session_id, exc
             )
             return
 
-        if reason.startswith("remote") and record_id and record_id > 0:
+        if (
+            reason.startswith("remote")
+            and record_id
+            and record_id > 0
+            and created
+        ):
             try:
                 db.mark_actions_synced([record_id])
             except Exception as exc:
@@ -515,9 +531,9 @@ class ApplicationManager(QObject):
     def _show_logout_message(self, reason: str) -> None:
         reason_key = (reason or "").strip().lower()
         messages = {
-            "local_logout": "Смена завершена.",
+            "local_logout": "Смена завершена",
             "local_logout_offline": "Смена будет завершена при восстановлении сети.",
-            "remote_force_logout": "Сессия завершена администратором.",
+            "remote_force_logout": "Сессия завершена администратором",
         }
         message = messages.get(reason_key)
         if not message:
@@ -542,6 +558,13 @@ class ApplicationManager(QObject):
     def return_to_login(self, reason: str) -> None:
         logger = logging.getLogger(__name__)
         normalized = (reason or "").strip().lower() or "local_logout"
+        if self._session_already_terminated:
+            logger.debug(
+                "Session already terminated, skip return_to_login (reason=%s)",
+                normalized,
+            )
+            return
+        self._session_already_terminated = True
         if self._returning_to_login:
             logger.debug(
                 "Return to login already in progress (skip reason=%s)", normalized
