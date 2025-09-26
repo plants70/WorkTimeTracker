@@ -53,6 +53,7 @@ class ApplicationManager(QObject):
         try:
             self._initialize_resources()
             self._start_sync_service()
+            self.app.aboutToQuit.connect(self._on_app_about_to_quit)
             self.signals.app_started.emit()
         except Exception as e:
             self._show_error("Initialization Error", f"Failed to initialize: {e}")
@@ -79,17 +80,25 @@ class ApplicationManager(QObject):
         try:
             logger = logging.getLogger(__name__)
             logger.info("=== ЗАПУСК СЕРВИСА СИНХРОНИЗАЦИИ ===")
-            
-            # Запускаем сервис синхронизации в фоне
-            self.sync_manager = SyncManager(signals=self.sync_signals, background_mode=True)
-            if hasattr(self.sync_manager, "start"):
-                self.sync_manager.start()
-            elif hasattr(self.sync_manager, "start_background"):
-                self.sync_manager.start_background()
-            
+
+            # Запускаем сервис синхронизации в отдельном потоке Qt
+            self.sync_worker = SyncManager(signals=self.sync_signals, background_mode=True)
+            self.sync_thread = QThread(self)
+            self.sync_worker.moveToThread(self.sync_thread)
+
+            self.sync_thread.started.connect(self.sync_worker.run_service)
+            self.sync_thread.finished.connect(self.sync_worker.deleteLater)
+
+            self.sync_thread.start()
+
             logger.info("Sync service started")
         except Exception as e:
             logger.error(f"Failed to start sync service: {e}")
+            if self.sync_thread and self.sync_thread.isRunning():
+                self.sync_thread.quit()
+                self.sync_thread.wait()
+            self.sync_thread = None
+            self.sync_worker = None
 
     # --- UI потоки ---
     def show_login_window(self):
@@ -187,17 +196,32 @@ class ApplicationManager(QObject):
                 logger.error("Error on login_window.close(): %s", e)
             self.login_window = None
 
-        # останавливаем сервис синхронизации
+        self._stop_sync_service()
+
+        self.app.quit()
+
+    def _on_app_about_to_quit(self):
+        logger = logging.getLogger(__name__)
+        logger.info("Application aboutToQuit signal received. Stopping sync service.")
+        self._stop_sync_service()
+
+    def _stop_sync_service(self):
+        if not self.sync_worker and not self.sync_thread:
+            return
+
+        logger = logging.getLogger(__name__)
         try:
             if self.sync_worker:
                 self.sync_worker.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Error stopping sync worker: %s", e)
+
         if self.sync_thread and self.sync_thread.isRunning():
             self.sync_thread.quit()
             self.sync_thread.wait()
 
-        self.app.quit()
+        self.sync_thread = None
+        self.sync_worker = None
 
     # точка входа UI
     def run(self):
