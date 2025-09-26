@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 class EmployeeApp(QWidget):
     status_changed = pyqtSignal(str)
     app_closed = pyqtSignal(str)
+    notification_requested = pyqtSignal(str, str)
 
     def __init__(
         self,
@@ -75,10 +76,15 @@ class EmployeeApp(QWidget):
 
         self.login_was_performed = login_was_performed
 
+        self.notification_requested.connect(self._show_notification)
+
         self._init_db()
         self._init_ui()
         self._init_timers()
         self._init_shift_check_timer()
+
+    def _show_notification(self, title: str, message: str):
+        Notifier.show(title, message)
 
     def get_user(self):
         return {
@@ -130,7 +136,10 @@ class EmployeeApp(QWidget):
                 logger.warning("Sheets: log_user_actions вернул False — оставляю запись несинхронизированной")
         except Exception as e:
             logger.warning(f"Ошибка отправки действия в Google Sheets: {e}")
-            Notifier.show("Оффлайн режим", "Данные будут отправлены при появлении интернета.")
+            self.notification_requested.emit(
+                "Оффлайн режим",
+                "Данные будут отправлены при появлении интернета."
+            )
 
     def _finish_and_send_previous_status(self):
         prev_id = self.db.finish_last_status(self.email, self.session_id)
@@ -150,7 +159,10 @@ class EmployeeApp(QWidget):
                 logger.warning("Sheets: log_user_actions вернул False — оставляю запись несинхронизированной")
         except Exception as e:
             logger.warning(f"Ошибка отправки завершённого статуса в Sheets: {e}")
-            Notifier.show("Оффлайн режим", "Предыдущий статус будет синхронизирован позже.")
+            self.notification_requested.emit(
+                "Оффлайн режим",
+                "Предыдущий статус будет синхронизирован позже."
+            )
 
     def _init_db(self):
         try:
@@ -302,7 +314,7 @@ class EmployeeApp(QWidget):
             self.finish_btn.setEnabled(False)
             for btn in self.status_buttons.values():
                 btn.setEnabled(False)
-            Notifier.show("WorkLog", "Смена завершена (автоматически, по данным системы).")
+            self._show_notification("WorkLog", "Смена завершена (автоматически, по данным системы).")
             logger.info(f"[AUTO_LOGOUT_DETECT] Локально найден LOGOUT для {self.email}")
             return
 
@@ -313,7 +325,7 @@ class EmployeeApp(QWidget):
             self.finish_btn.setEnabled(False)
             for btn in self.status_buttons.values():
                 btn.setEnabled(False)
-            Notifier.show("WorkLog", "Смена завершена администратором.")
+            self._show_notification("WorkLog", "Смена завершена администратором.")
             try:
                 self._log_shift_end("Разлогинен администратором (удалённо)", reason="admin")
             except Exception as e:
@@ -379,7 +391,7 @@ class EmployeeApp(QWidget):
         if self.last_sync_time:
             time_since_sync = datetime.now() - self.last_sync_time
             if time_since_sync > timedelta(hours=1):
-                Notifier.show("WorkLog", "Данные не синхронизировались более часа")
+                self._show_notification("WorkLog", "Данные не синхронизировались более часа")
 
     def _is_shift_ended(self) -> bool:
         try:
@@ -457,7 +469,7 @@ class EmployeeApp(QWidget):
             self.status_start_time = datetime.fromisoformat(now)
             self.comment_input.clear()
             self._update_info_text()
-            Notifier.show("WorkLog", f"Статус изменен на: {new_status}")
+            self._show_notification("WorkLog", f"Статус изменен на: {new_status}")
             
         except Exception as e:
             logger.error(f"Ошибка при изменении статуса: {e}")
