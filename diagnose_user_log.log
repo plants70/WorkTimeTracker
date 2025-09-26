@@ -1,0 +1,85 @@
+2025-08-22 12:16:57,328 - DEBUG - === SheetsAPI Initialization Debug ===
+2025-08-22 12:16:57,342 - DEBUG - sys.frozen: False
+2025-08-22 12:16:57,366 - DEBUG - sys._MEIPASS: N/A
+2025-08-22 12:16:57,371 - DEBUG - Current working dir: C:\moy python\projects vs code\roma
+2025-08-22 12:16:57,387 - DEBUG - sys.path: ['c:\\moy python\\projects vs code\\roma', 'C:\\313\\python313.zip', 'C:\\313\\DLLs', 'C:\\313\\Lib', 'C:\\313', 'C:\\moy python\\projects vs code\\roma\\.venv', 'C:\\moy python\\projects vs code\\roma\\.venv\\Lib\\site-packages', 'C:\\moy python\\projects vs code\\roma\\.venv\\Lib\\site-packages\\win32', 'C:\\moy python\\projects vs code\\roma\\.venv\\Lib\\site-packages\\win32\\lib', 'C:\\moy python\\projects vs code\\roma\\.venv\\Lib\\site-packages\\Pythonwin', 'c:\\moy python\\projects vs code\\roma']
+2025-08-22 12:16:57,432 - INFO - Initializing with credentials: C:\Temp\tmpdsw_5ozp.json
+2025-08-22 12:16:57,437 - DEBUG - Credentials exists: True
+2025-08-22 12:16:57,446 - INFO - Client init attempt 1/3
+2025-08-22 12:16:57,980 - DEBUG - Converted retries value: 3 -> Retry(total=3, connect=None, read=None, redirect=None, status=None)
+2025-08-22 12:16:57,984 - DEBUG - Converted retries value: 3 -> Retry(total=3, connect=None, read=None, redirect=None, status=None)
+2025-08-22 12:16:57,986 - INFO - Testing API connection...
+2025-08-22 12:16:58,032 - DEBUG - Starting new HTTPS connection (1): oauth2.googleapis.com:443
+2025-08-22 12:16:58,275 - DEBUG - https://oauth2.googleapis.com:443 "POST /token HTTP/1.1" 200 None
+2025-08-22 12:16:58,288 - DEBUG - Starting new HTTPS connection (1): www.googleapis.com:443
+2025-08-22 12:16:58,925 - DEBUG - https://www.googleapis.com:443 "GET /drive/v3/files?q=mimeType%3D%22application%2Fvnd.google-apps.spreadsheet%22&pageSize=1000&supportsAllDrives=True&includeItemsFromAllDrives=True&fields=kind%2CnextPageToken%2Cfiles%28id%2Cname%2CcreatedTime%2CmodifiedTime%29 HTTP/1.1" 200 None
+2025-08-22 12:16:58,947 - DEBUG - API test successful. Found 2 spreadsheets in 0.96s
+2025-08-22 12:16:58,953 - DEBUG - Starting new HTTPS connection (1): www.googleapis.com:443
+2025-08-22 12:16:59,377 - DEBUG - https://www.googleapis.com:443 "GET /drive/v3/about?fields=user%2CstorageQuota HTTP/1.1" 200 None
+2025-08-22 12:16:59,382 - DEBUG - Quota updated: QuotaInfo(remaining=100, reset_time=60, daily_used=0.0)
+2025-08-22 12:16:59,759 - DEBUG - https://www.googleapis.com:443 "GET /drive/v3/about?fields=user%2CstorageQuota HTTP/1.1" 200 None
+2025-08-22 12:16:59,762 - DEBUG - Quota updated: QuotaInfo(remaining=100, reset_time=60, daily_used=0.0)
+2025-08-22 12:16:59,764 - INFO - Google Sheets client initialized successfully
+2025-08-22 12:16:59,765 - INFO - SheetsAPI instance initialized successfully
+2025-08-22 12:16:59,772 - INFO - 🚀 Запуск диагностики для пользователя: 10@ya.ru
+2025-08-22 12:16:59,774 - INFO - ============================================================
+2025-08-22 12:16:59,775 - INFO - 🔍 Проверка файла учетных данных...
+2025-08-22 12:16:59,777 - INFO - ✅ Файл credentials найден: C:\Temp\tmpdsw_5ozp.json
+2025-08-22 12:16:59,779 - INFO - 🔍 Проверка локальной базы данных...
+2025-08-22 12:16:59,790 - INFO - ✅ Подключено к БД: local_backup.db
+2025-08-22 12:16:59,875 - INFO - 🟢 Найдено 10 записей для 10@ya.ru:
+2025-08-22 12:16:59,879 - INFO -   ID=90 | Завершено | 2025-08-20T16:32:30.760428 | synced=0 | group=None | action=LOGOUT
+2025-08-22 12:16:59,881 - INFO -   ID=89 | В работе | 2025-08-20T16:25:26.533438 | synced=1 | group=None | action=LOGIN
+2025-08-22 12:16:59,884 - INFO -   ID=88 | Завершено | 2025-08-20T15:46:31.576224 | synced=1 | group=None | action=LOGOUT
+2025-08-22 12:16:59,909 - INFO -   ID=87 | В работе | 2025-08-20T15:45:24.967479 | synced=1 | group=None | action=LOGIN
+2025-08-22 12:16:59,929 - INFO -   ID=86 | Завершено | 2025-08-20T15:40:10.100615 | synced=1 | group=None | action=LOGOUT
+2025-08-22 12:16:59,942 - INFO -   ID=85 | В работе | 2025-08-20T15:31:26.182397 | synced=1 | group=None | action=LOGIN
+2025-08-22 12:17:00,012 - INFO -   ID=84 | Завершено | 2025-08-20T15:26:37.952827 | synced=1 | group=None | action=LOGOUT
+2025-08-22 12:17:00,066 - INFO -   ID=83 | В работе | 2025-08-20T15:13:43.245650 | synced=1 | group=None | action=LOGIN
+2025-08-22 12:17:00,109 - INFO -   ID=78 | Завершено | 2025-08-20T14:34:56.448263 | synced=1 | group=None | action=LOGOUT
+2025-08-22 12:17:00,158 - INFO -   ID=77 | В работе | 2025-08-20T14:27:50.711625 | synced=1 | group=None | action=LOGIN
+2025-08-22 12:17:00,273 - INFO - 🔍 Проверка сопоставления групп...
+2025-08-22 12:17:00,313 - INFO - 📧 Email: 10@ya.ru
+2025-08-22 12:17:00,404 - INFO - 🔍 Префикс: 10
+2025-08-22 12:17:00,453 - INFO -   mapping: 'call' → 'Входящие'
+2025-08-22 12:17:00,483 - INFO -   mapping: 'appointment' → 'Запись'
+2025-08-22 12:17:00,530 - INFO -   mapping: 'mail' → 'Почта'
+2025-08-22 12:17:00,546 - INFO -   mapping: 'dental' → 'Стоматология'
+2025-08-22 12:17:00,620 - INFO -   mapping: 'default' → 'Входящие'
+2025-08-22 12:17:00,686 - INFO - ✅ Определённая группа: Входящие
+2025-08-22 12:17:00,724 - INFO - 🔍 Подключение к Google Sheets...
+2025-08-22 12:17:00,755 - DEBUG - Credentials check: valid
+2025-08-22 12:17:00,790 - INFO - ✅ Авторизация в Google Sheets успешна
+2025-08-22 12:17:01,430 - DEBUG - https://www.googleapis.com:443 "GET /drive/v3/files?q=mimeType%3D%22application%2Fvnd.google-apps.spreadsheet%22+and+name+%3D+%22WorkLog%22&pageSize=1000&supportsAllDrives=True&includeItemsFromAllDrives=True&fields=kind%2CnextPageToken%2Cfiles%28id%2Cname%2CcreatedTime%2CmodifiedTime%29 HTTP/1.1" 200 None
+2025-08-22 12:17:01,440 - DEBUG - Starting new HTTPS connection (1): sheets.googleapis.com:443
+2025-08-22 12:17:02,630 - DEBUG - https://sheets.googleapis.com:443 "GET /v4/spreadsheets/1xuxs4-lGlEIi1nvJ3EWrZj5U0SiADC1ceXKxqzFvmvs?includeGridData=false HTTP/1.1" 200 None
+2025-08-22 12:17:02,634 - INFO - ✅ Документ найден: 'WorkLog'
+2025-08-22 12:17:03,491 - DEBUG - https://sheets.googleapis.com:443 "GET /v4/spreadsheets/1xuxs4-lGlEIi1nvJ3EWrZj5U0SiADC1ceXKxqzFvmvs?includeGridData=false HTTP/1.1" 200 None
+2025-08-22 12:17:03,498 - INFO - 📋 Доступные листы: ['Admins', 'Users', 'Groups', 'WorkLog_Запись', 'WorkLog_Входящие', 'ActiveSessions', 'WorkLog_Стоматология', 'WorkLog_Почта']
+2025-08-22 12:17:03,500 - INFO - ✅ Лист найден: 'WorkLog_Входящие'
+2025-08-22 12:17:03,501 - INFO - 🔍 Проверка активной сессии в Google Sheets...
+2025-08-22 12:17:03,503 - DEBUG - Accessing worksheet 'ActiveSessions'
+2025-08-22 12:17:03,504 - DEBUG - Accessing worksheet 'ActiveSessions'
+2025-08-22 12:17:03,506 - DEBUG - Opening spreadsheet: WorkLog
+2025-08-22 12:17:03,507 - DEBUG - Attempt 1: open
+2025-08-22 12:17:03,941 - DEBUG - https://www.googleapis.com:443 "GET /drive/v3/files?q=mimeType%3D%22application%2Fvnd.google-apps.spreadsheet%22+and+name+%3D+%22WorkLog%22&pageSize=1000&supportsAllDrives=True&includeItemsFromAllDrives=True&fields=kind%2CnextPageToken%2Cfiles%28id%2Cname%2CcreatedTime%2CmodifiedTime%29 HTTP/1.1" 200 None
+2025-08-22 12:17:04,813 - DEBUG - https://sheets.googleapis.com:443 "GET /v4/spreadsheets/1xuxs4-lGlEIi1nvJ3EWrZj5U0SiADC1ceXKxqzFvmvs?includeGridData=false HTTP/1.1" 200 None
+2025-08-22 12:17:04,817 - DEBUG - Getting worksheet: ActiveSessions
+2025-08-22 12:17:04,818 - DEBUG - Rate limit: waiting 0.19s
+2025-08-22 12:17:05,009 - DEBUG - Attempt 1: worksheet
+2025-08-22 12:17:05,248 - DEBUG - https://sheets.googleapis.com:443 "GET /v4/spreadsheets/1xuxs4-lGlEIi1nvJ3EWrZj5U0SiADC1ceXKxqzFvmvs?includeGridData=false HTTP/1.1" 200 None
+2025-08-22 12:17:05,252 - INFO - Worksheet 'ActiveSessions' cached successfully
+2025-08-22 12:17:05,254 - DEBUG - Rate limit: waiting 1.26s
+2025-08-22 12:17:06,511 - DEBUG - Attempt 1: get_all_records
+2025-08-22 12:17:07,398 - DEBUG - https://sheets.googleapis.com:443 "GET /v4/spreadsheets/1xuxs4-lGlEIi1nvJ3EWrZj5U0SiADC1ceXKxqzFvmvs/values/%27ActiveSessions%27 HTTP/1.1" 200 None
+2025-08-22 12:17:07,417 - DEBUG - Получено 116 записей из 'ActiveSessions'
+2025-08-22 12:17:07,419 - INFO - 🟢 Активная сессия найдена:
+2025-08-22 12:17:07,420 - INFO -   SessionID: 10@ya.ru_20250822093937
+2025-08-22 12:17:07,421 - INFO -   LoginTime: 2025-08-22T09:39:37
+2025-08-22 12:17:07,422 - INFO -   Status: active
+2025-08-22 12:17:07,426 - INFO - ============================================================
+2025-08-22 12:17:07,427 - INFO - ✅ Диагностика завершена.
+2025-08-22 12:17:07,428 - INFO - 💡 Рекомендации:
+2025-08-22 12:17:07,429 - INFO -    - Убедитесь, что лист 'WorkLog_Входящие' существует.
+2025-08-22 12:17:07,431 - INFO -    - Если используется 'dental' вместо 'Стоматология', исправьте код или создайте лист 'WorkLog_dental'.
+2025-08-22 12:17:07,432 - INFO -    - Проверьте, что в БД в колонке `user_group` записывается 'Входящие', а не 'dental'.
