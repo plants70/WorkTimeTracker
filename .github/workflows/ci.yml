@@ -12,9 +12,10 @@ jobs:
       GOOGLE_SHEET_NAME: WorkLog
       USERS_SHEET: Users
       ACTIVE_SESSIONS_SHEET: ActiveSessions
-      CREDENTIALS_FILE: .creds/service_account.json
       SPREADSHEET_ID: 1xuxs4-lGlEIi1nvJ3EWrZj5U0SiADC1ceXKxqzFvmvs
+      CREDENTIALS_FILE: .creds/service_account.json
       TELEGRAM_SILENT: "1"
+      HAS_SA: ${{ secrets.SERVICE_ACCOUNT_JSON_BASE64 != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +29,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Decode service account
-        if: ${{ secrets.SERVICE_ACCOUNT_JSON_BASE64 != '' }}
+        if: ${{ env.HAS_SA == 'true' }}
         env:
           SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.SERVICE_ACCOUNT_JSON_BASE64 }}
         run: |
