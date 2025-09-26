@@ -31,66 +31,70 @@ else:
 LOG_DIR.mkdir(parents=True, exist_ok=True) # Создаем при импорте модуля
 # ---
 
-# ==================== Пути к файлам ====================
-# Настройки для зашифрованного архива с credentials
-CREDENTIALS_ZIP = BASE_DIR / 'secret_creds.zip'  # архив должен лежать рядом с exe
+# ==================== Пути к файлам / креды ====================
+from pathlib import Path
+import pyzipper
+import tempfile
+from contextlib import contextmanager
+import atexit
 
-# Пароль берётся из переменной окружения
-CREDENTIALS_ZIP_PASSWORD = os.getenv("CREDENTIALS_ZIP_PASSWORD")
-if CREDENTIALS_ZIP_PASSWORD is None:
-    raise RuntimeError("CREDENTIALS_ZIP_PASSWORD не найден в .env файле!")
-CREDENTIALS_ZIP_PASSWORD = CREDENTIALS_ZIP_PASSWORD.encode('utf-8')
-
-# === Поддержка прямого пути к JSON через переменную окружения (для CI/Codex) ===
-CREDENTIALS_FILE_ENV = os.getenv("CREDENTIALS_FILE")  # например, ".creds/service_account.json"
+# 1) Предпочитаем явный путь из окружения (для CI/Codex)
+CREDENTIALS_FILE_ENV = os.getenv("CREDENTIALS_FILE")
 if CREDENTIALS_FILE_ENV:
     CREDENTIALS_FILE_ENV = Path(CREDENTIALS_FILE_ENV)
 
-# --- Ленивая загрузка credentials ---
+# 2) Фолбэк: зашифрованный ZIP рядом с exe/проектом (для локального запуска)
+CREDENTIALS_ZIP = BASE_DIR / 'secret_creds.zip'
+CREDENTIALS_ZIP_PASSWORD = os.getenv("CREDENTIALS_ZIP_PASSWORD")  # может быть None в CI
+
+# --- Ленивая загрузка credentials из ZIP (если нет CREDENTIALS_FILE_ENV) ---
 _CREDS_TMP_DIR = Path(tempfile.gettempdir()) / "wtt_creds"
 _CREDS_TMP_DIR.mkdir(parents=True, exist_ok=True)
 _CREDENTIALS_FILE: Optional[Path] = None
 
 def _cleanup_credentials():
-    """Удаляет временный файл с учетными данными при выходе из процесса."""
     try:
         if _CREDENTIALS_FILE and _CREDENTIALS_FILE.exists():
             _CREDENTIALS_FILE.unlink()
     except Exception:
         pass
 
-# Регистрируем очистку при выходе
 atexit.register(_cleanup_credentials)
 
 @contextmanager
 def credentials_path() -> Path:
     """
-    Возвращает путь к credentials:
-    - если задан CREDENTIALS_FILE_ENV — берём его
-    - иначе извлекаем service_account.json из зашифрованного zip
+    Возвращает путь к service_account.json:
+    - если задан CREDENTIALS_FILE (CI/Codex) — берём его;
+    - иначе извлекаем из зашифрованного ZIP (локально).
     """
-    # 1) Явный путь из окружения (Codex/CI)
+    # 1) Явный файл из окружения
     if CREDENTIALS_FILE_ENV:
         yield CREDENTIALS_FILE_ENV
         return
 
-    # 2) Иначе — старая логика с ZIP
+    # 2) ZIP-архив
     global _CREDENTIALS_FILE
     if _CREDENTIALS_FILE and _CREDENTIALS_FILE.exists():
         yield _CREDENTIALS_FILE
         return
+
     if not CREDENTIALS_ZIP.exists():
         raise FileNotFoundError(f"Zip с credentials не найден: {CREDENTIALS_ZIP}")
+    if not CREDENTIALS_ZIP_PASSWORD:
+        raise RuntimeError("Не задан CREDENTIALS_ZIP_PASSWORD и отсутствует CREDENTIALS_FILE")
 
     with pyzipper.AESZipFile(CREDENTIALS_ZIP) as zf:
-        zf.pwd = CREDENTIALS_ZIP_PASSWORD
+        zf.pwd = CREDENTIALS_ZIP_PASSWORD.encode('utf-8')
         try:
             data = zf.read('service_account.json')
         except KeyError:
             raise FileNotFoundError("Файл 'service_account.json' не найден в архиве")
+
         temp_file = _CREDS_TMP_DIR / 'service_account.json'
         with open(temp_file, 'wb') as f:
             f.write(data)
+
         _CREDENTIALS_FILE = temp_file
         yield _CREDENTIALS_FILE
 
@@ -243,13 +247,15 @@ def validate_config() -> None:
     if not GROUP_MAPPING.get("default"):
         errors.append("Не определена группы по умолчанию в GROUP_MAPPING")
     
-    # Проверяем наличие критически важных файлов
+    # Проверка наличия кредов
     if CREDENTIALS_FILE_ENV:
         if not CREDENTIALS_FILE_ENV.exists():
             errors.append(f"Файл учетных данных не найден: {CREDENTIALS_FILE_ENV}")
     else:
         if not CREDENTIALS_ZIP.exists():
             errors.append(f"Файл secret_creds.zip не найден: {CREDENTIALS_ZIP}")
+        if not CREDENTIALS_ZIP_PASSWORD:
+            errors.append("Не задан CREDENTIALS_ZIP_PASSWORD (и нет CREDENTIALS_FILE)")
     
     # Проверяем стратегию ретраев
     if len(SYNC_RETRY_STRATEGY) < 3:
