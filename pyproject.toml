@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "work-time-tracker"
+version = "0.4.0"
+description = "Work Time Tracker"
+authors = [{ name = "WTT Team" }]
+requires-python = ">=3.10"
+dependencies = [
+  "PyQt5>=5.15",
+  "gspread>=6.0.0",
+  "google-auth>=2.0.0",
+  "google-auth-oauthlib>=1.0.0",
+  "requests>=2.31",
+  "urllib3>=2.0",
+  "python-dateutil>=2.9.0.post0",
+]
+
+[project.scripts]
+wtt-user    = "user_app.main:main"
+wtt-admin   = "admin_app.main_admin:main"
+wtt-doctor  = "tools.doctor:main"
+wtt-archive = "tools.archive_cli:main"
+wtt-telebot = "telegram_bot.main:main"
+wtt-send    = "tools.tg_send:main"
+wtt-tg-env  = "tools.tg_envcheck:main"
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["admin_app*", "user_app*", "sync*", "tools*", "telegram_bot*"]
+
+[tool.setuptools]
+py-modules = ["logging_setup", "config", "sheets_api"]

@@ -1,0 +1,316 @@
+{
+  "ts": "2025-09-02T17:13:19",
+  "log_dir": "C:\\Users\\Сергей\\AppData\\Roaming\\WorkTimeTracker\\logs",
+  "credentials_file": "C:\\Temp\\wtt_creds\\service_account.json",
+  "sqlite": {
+    "objects": [
+      {
+        "name": "app_logs",
+        "type": "table",
+        "sql": "CREATE TABLE app_logs (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                ts TEXT NOT NULL,\n                level TEXT NOT NULL,\n                message TEXT NOT NULL\n            )"
+      },
+      {
+        "name": "app_logs_legacy_20250826175446",
+        "type": "table",
+        "sql": "CREATE TABLE \"app_logs_legacy_20250826175446\" (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                ts TEXT NOT NULL,\n                level TEXT NOT NULL,\n                message TEXT NOT NULL\n            )"
+      },
+      {
+        "name": "check_comment_length",
+        "type": "trigger",
+        "sql": "CREATE TRIGGER check_comment_length\n            BEFORE INSERT ON logs\n            FOR EACH ROW\n            WHEN length(NEW.comment) > 500\n            BEGIN\n                SELECT RAISE(ABORT, 'Comment too long');\n            END"
+      },
+      {
+        "name": "idx_app_logs_ts",
+        "type": "index",
+        "sql": "CREATE INDEX idx_app_logs_ts ON app_logs(ts)"
+      },
+      {
+        "name": "idx_logs_email",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_email ON logs(email)"
+      },
+      {
+        "name": "idx_logs_session",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_session ON logs(session_id)"
+      },
+      {
+        "name": "idx_logs_synced",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_synced ON logs(synced)"
+      },
+      {
+        "name": "idx_logs_timestamp",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_timestamp ON logs(timestamp)"
+      },
+      {
+        "name": "idx_logs_ts",
+        "type": "index",
+        "sql": "CREATE INDEX idx_logs_ts ON \"app_logs_legacy_20250826175446\"(ts)"
+      },
+      {
+        "name": "idx_offline_actions_status_ts",
+        "type": "index",
+        "sql": "CREATE INDEX idx_offline_actions_status_ts ON offline_actions(status, ts)"
+      },
+      {
+        "name": "logs",
+        "type": "table",
+        "sql": "CREATE TABLE logs (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                session_id TEXT NOT NULL,\n                email TEXT NOT NULL,\n                name TEXT NOT NULL,\n                status TEXT,\n                action_type TEXT NOT NULL,\n                comment TEXT,\n                timestamp TEXT NOT NULL,\n                synced INTEGER DEFAULT 0,\n                sync_attempts INTEGER DEFAULT 0,\n                last_sync_attempt TEXT,\n                priority INTEGER DEFAULT 1,\n                status_start_time TEXT,\n                status_end_time TEXT,\n                reason TEXT,\n                user_group TEXT\n            )"
+      },
+      {
+        "name": "offline_actions",
+        "type": "table",
+        "sql": "CREATE TABLE offline_actions (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                ts TEXT NOT NULL,\n                action_type TEXT NOT NULL,\n                payload TEXT NOT NULL,  -- JSON-строка\n                status TEXT NOT NULL DEFAULT 'pending'  -- pending|synced|failed\n            )"
+      },
+      {
+        "name": "prevent_duplicate_logout",
+        "type": "trigger",
+        "sql": "CREATE TRIGGER prevent_duplicate_logout\n            BEFORE INSERT ON logs\n            FOR EACH ROW\n            WHEN LOWER(NEW.action_type) = 'logout' AND EXISTS (\n                SELECT 1 FROM logs\n                WHERE session_id = NEW.session_id\n                  AND LOWER(action_type) = 'logout'\n                  AND timestamp > datetime('now', '-5 minutes')\n            )\n            BEGIN\n                SELECT RAISE(ABORT, 'Duplicate LOGOUT action');\n            END"
+      },
+      {
+        "name": "sqlite_sequence",
+        "type": "table",
+        "sql": "CREATE TABLE sqlite_sequence(name,seq)"
+      }
+    ],
+    "stats": {
+      "app_logs": 0,
+      "app_logs_legacy_20250826175446": 0,
+      "logs": 26,
+      "offline_actions": 0
+    },
+    "samples": {
+      "app_logs": [],
+      "app_logs_legacy_20250826175446": [],
+      "logs": [
+        [
+          26,
+          "10@ya.ru_20250902102558",
+          "10@ya.ru",
+          "тест стом 3",
+          "Завершено",
+          "LOGOUT",
+          "Завершение смены (нормальное)",
+          "2025-09-02T07:31:20.622314+00:00",
+          0,
+          0,
+          null,
+          1,
+          "2025-09-02T10:31:20.622249",
+          "2025-09-02T10:31:20.622249",
+          "user",
+          "Стоматология"
+        ],
+        [
+          25,
+          "10@ya.ru_20250902102558",
+          "10@ya.ru",
+          "тест стом 3",
+          "Аудио",
+          "STATUS_CHANGE",
+          null,
+          "2025-09-02T07:30:03.200596+00:00",
+          1,
+          1,
+          "2025-09-02T07:30:05.016279+00:00",
+          1,
+          "2025-09-02T10:30:03.197439",
+          "2025-09-02T07:31:20.619894+00:00",
+          null,
+          null
+        ],
+        [
+          24,
+          "10@ya.ru_20250902102558",
+          "10@ya.ru",
+          "тест стом 3",
+          "Чат",
+          "STATUS_CHANGE",
+          null,
+          "2025-09-02T07:29:57.160421+00:00",
+          1,
+          2,
+          "2025-09-02T07:30:03.496395+00:00",
+          1,
+          "2025-09-02T10:29:57.156445",
+          "2025-09-02T10:30:03.197439",
+          null,
+          null
+        ],
+        [
+          23,
+          "10@ya.ru_20250902102558",
+          "10@ya.ru",
+          "тест стом 3",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-09-02T07:25:58.866299+00:00",
+          1,
+          2,
+          "2025-09-02T07:29:57.501512+00:00",
+          1,
+          "2025-09-02T10:25:58.866228",
+          "2025-09-02T10:29:57.156445",
+          null,
+          null
+        ],
+        [
+          22,
+          "10@ya.ru_20250901175741",
+          "10@ya.ru",
+          "тест стом 3",
+          "Завершено",
+          "LOGOUT",
+          "Приложение закрыто через крестик",
+          "2025-09-02T05:58:06.182047+00:00",
+          0,
+          0,
+          null,
+          1,
+          "2025-09-02T08:58:06.181994",
+          "2025-09-02T08:58:06.181994",
+          "user",
+          "Стоматология"
+        ]
+      ],
+      "offline_actions": []
+    },
+    "extra": {
+      "logs_unsynced": 2,
+      "offline_actions_pending": 0
+    }
+  },
+  "sheets": {
+    "worksheets": [
+      {
+        "title": "Admins",
+        "header": [
+          "Login",
+          "Password"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 26
+      },
+      {
+        "title": "Users",
+        "header": [
+          "Email",
+          "Name",
+          "Phone",
+          "Role",
+          "Telegram",
+          "ShiftHours",
+          "Hours",
+          "NotifyTelegram",
+          "Group"
+        ],
+        "rows_hint": 999,
+        "cols_hint": 26
+      },
+      {
+        "title": "Groups",
+        "header": [
+          "Group",
+          "Sheet",
+          "Statuses",
+          "Возможные статусы: \"В работе\",\n    \"Чат\",\n    \"Аудио\",\n    \"Запись\",\n    \"Анкеты\",\n    \"Перерыв\",\n    \"Обед\",\n    \"ЦИТО\",\n    \"Обучение\" \nУказывать через запятую, без ковычек"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 18
+      },
+      {
+        "title": "WorkLog_Запись",
+        "header": [
+          "123@ya.ru",
+          "тест записи",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-08-25T17:49:24.965579",
+          "123@ya.r_20250825174924",
+          "2025-08-25T17:49:24.965517"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 20
+      },
+      {
+        "title": "WorkLog_Входящие",
+        "header": [
+          "Email",
+          "Name",
+          "Status",
+          "ActionType",
+          "Comment",
+          "Timestamp",
+          "SessionID",
+          "StatusStartTime",
+          "StatusEndTime"
+        ],
+        "rows_hint": 28,
+        "cols_hint": 20
+      },
+      {
+        "title": "ActiveSessions",
+        "header": [
+          "Email",
+          "Name",
+          "SessionID",
+          "LoginTime",
+          "Status",
+          "LogoutTime",
+          "RemoteCommand"
+        ],
+        "rows_hint": 905,
+        "cols_hint": 26
+      },
+      {
+        "title": "WorkLog_Стоматология",
+        "header": [
+          "10@ya.ru",
+          "тест стом 3",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-09-01 16:05:14",
+          "10@ya.ru_20250901160514",
+          "2025-09-01 19:05:14",
+          "2025-09-01 16:05:20"
+        ],
+        "rows_hint": 775,
+        "cols_hint": 18
+      },
+      {
+        "title": "WorkLog_Почта",
+        "header": [
+          "7@ya.ru",
+          "Тест почты",
+          "В работе",
+          "LOGIN",
+          "Начало смены",
+          "2025-08-25T14:21:50.941225",
+          "7@ya.ru_20250825142150",
+          "2025-08-25T14:21:50.941160"
+        ],
+        "rows_hint": 891,
+        "cols_hint": 20
+      },
+      {
+        "title": "AccessControl",
+        "header": [
+          "KeyType",
+          "KeyValue",
+          "AccessStatus",
+          "BlockUntil",
+          "Reason",
+          "UpdatedAt"
+        ],
+        "rows_hint": 1000,
+        "cols_hint": 26
+      }
+    ],
+    "expectations": []
+  }
+}
