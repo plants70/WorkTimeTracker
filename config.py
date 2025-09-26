@@ -41,6 +41,11 @@ if CREDENTIALS_ZIP_PASSWORD is None:
     raise RuntimeError("CREDENTIALS_ZIP_PASSWORD не найден в .env файле!")
 CREDENTIALS_ZIP_PASSWORD = CREDENTIALS_ZIP_PASSWORD.encode('utf-8')
 
+# === Поддержка прямого пути к JSON через переменную окружения (для CI/Codex) ===
+CREDENTIALS_FILE_ENV = os.getenv("CREDENTIALS_FILE")  # например, ".creds/service_account.json"
+if CREDENTIALS_FILE_ENV:
+    CREDENTIALS_FILE_ENV = Path(CREDENTIALS_FILE_ENV)
+
 # --- Ленивая загрузка credentials ---
 _CREDS_TMP_DIR = Path(tempfile.gettempdir()) / "wtt_creds"
 _CREDS_TMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -60,33 +65,32 @@ atexit.register(_cleanup_credentials)
 @contextmanager
 def credentials_path() -> Path:
     """
-    Лениво и временно извлекает service_account.json из зашифрованного ZIP.
-    Используйте: with credentials_path() as p: ...
+    Возвращает путь к credentials:
+    - если задан CREDENTIALS_FILE_ENV — берём его
+    - иначе извлекаем service_account.json из зашифрованного zip
     """
+    # 1) Явный путь из окружения (Codex/CI)
+    if CREDENTIALS_FILE_ENV:
+        yield CREDENTIALS_FILE_ENV
+        return
+
+    # 2) Иначе — старая логика с ZIP
     global _CREDENTIALS_FILE
-    
-    # Если файл уже извлечен и существует, используем его
     if _CREDENTIALS_FILE and _CREDENTIALS_FILE.exists():
         yield _CREDENTIALS_FILE
         return
-    
-    # Проверяем существование ZIP-архива
     if not CREDENTIALS_ZIP.exists():
         raise FileNotFoundError(f"Zip с credentials не найден: {CREDENTIALS_ZIP}")
-    
-    # Извлекаем файл из зашифрованного архива
+
     with pyzipper.AESZipFile(CREDENTIALS_ZIP) as zf:
         zf.pwd = CREDENTIALS_ZIP_PASSWORD
         try:
             data = zf.read('service_account.json')
         except KeyError:
             raise FileNotFoundError("Файл 'service_account.json' не найден в архиве")
-        
-        # Сохраняем во временный файл
         temp_file = _CREDS_TMP_DIR / 'service_account.json'
         with open(temp_file, 'wb') as f:
             f.write(data)
-        
         _CREDENTIALS_FILE = temp_file
         yield _CREDENTIALS_FILE
 
@@ -240,8 +244,12 @@ def validate_config() -> None:
         errors.append("Не определена группы по умолчанию в GROUP_MAPPING")
     
     # Проверяем наличие критически важных файлов
-    if not CREDENTIALS_ZIP.exists():
-        errors.append(f"Файл secret_creds.zip не найден: {CREDENTIALS_ZIP}")
+    if CREDENTIALS_FILE_ENV:
+        if not CREDENTIALS_FILE_ENV.exists():
+            errors.append(f"Файл учетных данных не найден: {CREDENTIALS_FILE_ENV}")
+    else:
+        if not CREDENTIALS_ZIP.exists():
+            errors.append(f"Файл secret_creds.zip не найден: {CREDENTIALS_ZIP}")
     
     # Проверяем стратегию ретраев
     if len(SYNC_RETRY_STRATEGY) < 3:
@@ -313,6 +321,7 @@ if __name__ == "__main__":
     print(f"BASE_DIR: {BASE_DIR}")
     print(f"LOG_DIR: {LOG_DIR}")
     print(f"CREDENTIALS_ZIP: {CREDENTIALS_ZIP}")
+    print(f"CREDENTIALS_FILE_ENV: {CREDENTIALS_FILE_ENV}")
     print(f"SYNC_RETRY_STRATEGY: {SYNC_RETRY_STRATEGY}")
     print(f"Максимальная задержка: {max(SYNC_RETRY_STRATEGY)} секунд ({max(SYNC_RETRY_STRATEGY)/60} минут)")
     
