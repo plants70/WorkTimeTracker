@@ -1,5 +1,9 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -30,22 +34,14 @@ jobs:
         run: |
           mkdir -p .creds
           python - <<'PY'
-          import os, base64, json, hashlib, pathlib
+          import os, base64, pathlib
           b64 = os.environ["SERVICE_ACCOUNT_JSON_BASE64"]
-          p = pathlib.Path(".creds/service_account.json")
-          p.write_bytes(base64.b64decode(b64))
-          sha = hashlib.sha256(p.read_bytes()).hexdigest()
-          sa = json.loads(p.read_text())
+          pathlib.Path(".creds/service_account.json").write_bytes(base64.b64decode(b64))
           print("service_account.json restored")
-          print("client_email:", sa.get("client_email"))
-          print("key_id:", (sa.get("private_key_id") or "")[:6] + "…")
-          print("sha256:", sha)
           PY
-          echo "HAVE_CREDS=1" >> $GITHUB_ENV
 
       - name: Compile check
         run: python -m compileall .
 
-      - name: Smoke test (runs only when creds present)
-        if: ${{ env.HAVE_CREDS == '1' }}
+      - name: Smoke test
         run: python tools/smoke_ci.py
