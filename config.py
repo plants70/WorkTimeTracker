@@ -166,16 +166,15 @@ SESSION_TIMEOUT: int = 3600  # секунды
 ALLOWED_DOMAINS: List[str] = ["company.com", "sberhealth.ru"]
 
 # ==================== Telegram уведомления ====================
-TELEGRAM_BOT_TOKEN: str | None = os.getenv("8318266102:AAESpe4TIQpkTEAFuFD_ECZKWBkc5Tk32LU") or None
-# Личный чат админа:
-TELEGRAM_ADMIN_CHAT_ID: str | None = os.getenv("1053909260") or None
-# Общий канал для групповых объявлений (может быть отрицательный id):
-TELEGRAM_BROADCAST_CHAT_ID: str | None = os.getenv("TELEGRAM_BROADCAST_CHAT_ID") or None
-# Анти-спам ключей (минут между одинаковыми событиями)
-TELEGRAM_MIN_INTERVAL_SEC: int = int(os.getenv("TELEGRAM_MIN_INTERVAL_SEC", "600"))
-# Тихие уведомления по умолчанию
-TELEGRAM_SILENT: bool = os.getenv("TELEGRAM_SILENT", "0") == "1"
-TELEGRAM_ALERTS_ENABLED: bool = bool(TELEGRAM_BOT_TOKEN and (TELEGRAM_ADMIN_CHAT_ID or TELEGRAM_BROADCAST_CHAT_ID))
+TELEGRAM_BOT_TOKEN: Optional[str] = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
+TELEGRAM_ADMIN_CHAT_ID: Optional[str] = (os.getenv("TELEGRAM_ADMIN_CHAT_ID") or "").strip() or None
+TELEGRAM_BROADCAST_CHAT_ID: Optional[str] = (os.getenv("TELEGRAM_BROADCAST_CHAT_ID") or "").strip() or None
+
+TELEGRAM_HAS_TARGET: bool = bool(TELEGRAM_ADMIN_CHAT_ID or TELEGRAM_BROADCAST_CHAT_ID)
+TELEGRAM_ALERTS_ENABLED: bool = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_HAS_TARGET)
+
+TELEGRAM_SILENT: bool = os.getenv("TELEGRAM_SILENT", "").lower() in {"1", "true", "yes", "on"}
+TELEGRAM_MIN_INTERVAL_SEC: int = int(os.getenv("TELEGRAM_MIN_INTERVAL_SEC", "60"))
 
 # ==================== Архивирование ====================
 ARCHIVE_DELETE_SOURCE_ROWS: bool = os.getenv("ARCHIVE_DELETE_SOURCE_ROWS", "1") == "1"
@@ -331,3 +330,11 @@ if __name__ == "__main__":
     print(f"PERSONAL_STATUS_LIMIT_PER_WINDOW: {PERSONAL_STATUS_LIMIT_PER_WINDOW}")
     print(f"SERVICE_ALERTS_ENABLED: {SERVICE_ALERTS_ENABLED}")
     print(f"SERVICE_ALERT_MIN_SECONDS: {SERVICE_ALERT_MIN_SECONDS}")
+    
+    # Тестируем Telegram настройки
+    print(f"TELEGRAM_BOT_TOKEN: {'***' if TELEGRAM_BOT_TOKEN else 'None'}")
+    print(f"TELEGRAM_ADMIN_CHAT_ID: {TELEGRAM_ADMIN_CHAT_ID}")
+    print(f"TELEGRAM_BROADCAST_CHAT_ID: {TELEGRAM_BROADCAST_CHAT_ID}")
+    print(f"TELEGRAM_ALERTS_ENABLED: {TELEGRAM_ALERTS_ENABLED}")
+    print(f"TELEGRAM_SILENT: {TELEGRAM_SILENT}")
+    print(f"TELEGRAM_MIN_INTERVAL_SEC: {TELEGRAM_MIN_INTERVAL_SEC}")
